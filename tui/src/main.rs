@@ -1,22 +1,22 @@
 use crossterm::{
     event::{self, Event, KeyCode, KeyEventKind},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use ratatui::{
+    Frame, Terminal,
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
-    Frame, Terminal,
+    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph},
 };
 use serde::Deserialize;
 use std::io;
 use tokio::sync::mpsc;
 
 // ---------------------------------------------------------------------------
-// API types (mirrors the server's JSON schemas)
+// API types
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Deserialize)]
@@ -52,6 +52,111 @@ struct ChatData {
     session_id: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct CommandsData {
+    commands: Vec<CommandInfo>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct CommandInfo {
+    name: String,
+    description: String,
+    subcommands: Vec<SubcommandInfo>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
+struct SubcommandInfo {
+    name: String,
+    description: String,
+    usage: String,
+}
+
+// ---------------------------------------------------------------------------
+// Autocomplete state
+// ---------------------------------------------------------------------------
+
+struct Autocomplete {
+    visible: bool,
+    items: Vec<CommandInfo>,
+    filtered: Vec<CommandInfo>,
+    state: ListState,
+    prefix: String,
+}
+
+impl Autocomplete {
+    fn new() -> Self {
+        Self {
+            visible: false,
+            items: Vec::new(),
+            filtered: Vec::new(),
+            state: ListState::default(),
+            prefix: String::new(),
+        }
+    }
+
+    fn show(&mut self, items: Vec<CommandInfo>, query: &str) {
+        self.items = items;
+        self.filter(query);
+        self.visible = true;
+    }
+
+    fn hide(&mut self) {
+        self.visible = false;
+        self.state.select(None);
+    }
+
+    fn filter(&mut self, query: &str) {
+        self.prefix = query.to_string();
+        let q = query.trim_start_matches('/');
+        self.filtered = self
+            .items
+            .iter()
+            .filter(|c| q.is_empty() || c.name.starts_with(q))
+            .cloned()
+            .collect();
+        if self.filtered.is_empty() {
+            self.state.select(None);
+        } else {
+            self.state.select(Some(0));
+        }
+    }
+
+    fn next(&mut self) {
+        if self.filtered.is_empty() {
+            return;
+        }
+        let i = self
+            .state
+            .selected()
+            .map(|i| (i + 1) % self.filtered.len())
+            .unwrap_or(0);
+        self.state.select(Some(i));
+    }
+
+    fn prev(&mut self) {
+        if self.filtered.is_empty() {
+            return;
+        }
+        let i = self
+            .state
+            .selected()
+            .map(|i| {
+                if i == 0 {
+                    self.filtered.len() - 1
+                } else {
+                    i - 1
+                }
+            })
+            .unwrap_or(0);
+        self.state.select(Some(i));
+    }
+
+    fn selected_command(&self) -> Option<&CommandInfo> {
+        self.state.selected().and_then(|i| self.filtered.get(i))
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Chat message (local display)
 // ---------------------------------------------------------------------------
@@ -78,6 +183,7 @@ struct App {
     model: Option<String>,
     status_msg: Option<String>,
     quit: bool,
+    autocomplete: Autocomplete,
 }
 
 impl App {
@@ -92,6 +198,7 @@ impl App {
             model: None,
             status_msg: None,
             quit: false,
+            autocomplete: Autocomplete::new(),
         }
     }
 
@@ -106,10 +213,7 @@ impl App {
 // ---------------------------------------------------------------------------
 
 async fn api_get(base: &str, path: &str) -> Result<ApiResponse, reqwest::Error> {
-    reqwest::get(format!("{base}{path}"))
-        .await?
-        .json()
-        .await
+    reqwest::get(format!("{base}{path}")).await?.json().await
 }
 
 async fn api_post(
@@ -133,6 +237,21 @@ async fn fetch_status(base: &str) -> Option<StatusData> {
     } else {
         None
     }
+}
+
+async fn fetch_commands(base: &str) -> Vec<CommandInfo> {
+    let resp = match api_get(base, "/api/commands").await {
+        Ok(r) => r,
+        Err(_) => return vec![],
+    };
+    if resp.success {
+        if let Some(data) = resp.data {
+            if let Ok(cmds) = serde_json::from_value::<CommandsData>(data) {
+                return cmds.commands;
+            }
+        }
+    }
+    vec![]
 }
 
 async fn send_chat(base: &str, message: &str) -> Result<String, String> {
@@ -202,11 +321,19 @@ fn draw(frame: &mut Frame, app: &App) {
     render_messages(frame, app, chunks[0]);
     render_input(frame, app, chunks[1]);
     render_statusbar(frame, app, chunks[2]);
+
+    if app.autocomplete.visible {
+        render_autocomplete(frame, app);
+    }
+}
+
+/// Split text into lines, preserving empty lines from consecutive newlines.
+fn split_lines(text: &str) -> Vec<String> {
+    text.split('\n').map(|s| s.to_string()).collect()
 }
 
 fn render_messages(frame: &mut Frame, app: &App, area: Rect) {
     let block = Block::default()
-        .title(" Bimo ")
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::DarkGray));
 
@@ -214,37 +341,78 @@ fn render_messages(frame: &mut Frame, app: &App, area: Rect) {
         .messages
         .iter()
         .flat_map(|entry| match entry {
-            ChatEntry::User(text) => vec![Line::from(vec![
-                Span::styled(
-                    "you  ",
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::raw(text.as_str()),
-            ])],
-            ChatEntry::Assistant(text) => text
-                .lines()
-                .map(|l| {
-                    Line::from(vec![
-                        Span::styled(
-                            "bimo ",
-                            Style::default()
-                                .fg(Color::Green)
-                                .add_modifier(Modifier::BOLD),
-                        ),
-                        Span::raw(l.to_string()),
-                    ])
+            ChatEntry::User(text) => split_lines(text)
+                .into_iter()
+                .enumerate()
+                .map(|(i, l)| {
+                    if i == 0 {
+                        Line::from(vec![
+                            Span::styled(
+                                "you  ",
+                                Style::default()
+                                    .fg(Color::Cyan)
+                                    .add_modifier(Modifier::BOLD),
+                            ),
+                            Span::raw(l),
+                        ])
+                    } else {
+                        Line::from(vec![Span::raw("      ".to_string() + &l)])
+                    }
                 })
                 .collect::<Vec<_>>(),
-            ChatEntry::System(text) => vec![Line::from(vec![Span::styled(
-                format!("sys  {text}"),
-                Style::default().fg(Color::DarkGray),
-            )])],
-            ChatEntry::Error(text) => vec![Line::from(vec![Span::styled(
-                format!("err  {text}"),
-                Style::default().fg(Color::Red),
-            )])],
+            ChatEntry::Assistant(text) => split_lines(text)
+                .into_iter()
+                .enumerate()
+                .map(|(i, l)| {
+                    if i == 0 {
+                        Line::from(vec![
+                            Span::styled(
+                                "bimo ",
+                                Style::default()
+                                    .fg(Color::Green)
+                                    .add_modifier(Modifier::BOLD),
+                            ),
+                            Span::raw(l),
+                        ])
+                    } else {
+                        Line::from(vec![Span::raw("      ".to_string() + &l)])
+                    }
+                })
+                .collect::<Vec<_>>(),
+            ChatEntry::System(text) => split_lines(text)
+                .into_iter()
+                .enumerate()
+                .map(|(i, l)| {
+                    if i == 0 {
+                        Line::from(vec![Span::styled(
+                            format!("sys  {l}"),
+                            Style::default().fg(Color::DarkGray),
+                        )])
+                    } else {
+                        Line::from(vec![Span::styled(
+                            format!("      {l}"),
+                            Style::default().fg(Color::DarkGray),
+                        )])
+                    }
+                })
+                .collect::<Vec<_>>(),
+            ChatEntry::Error(text) => split_lines(text)
+                .into_iter()
+                .enumerate()
+                .map(|(i, l)| {
+                    if i == 0 {
+                        Line::from(vec![Span::styled(
+                            format!("err  {l}"),
+                            Style::default().fg(Color::Red),
+                        )])
+                    } else {
+                        Line::from(vec![Span::styled(
+                            format!("      {l}"),
+                            Style::default().fg(Color::Red),
+                        )])
+                    }
+                })
+                .collect::<Vec<_>>(),
         })
         .collect();
 
@@ -258,12 +426,6 @@ fn render_messages(frame: &mut Frame, app: &App, area: Rect) {
         .scroll((scroll as u16, 0));
 
     frame.render_widget(paragraph, area);
-
-    if total_lines > visible {
-        let mut state = ScrollbarState::new(total_lines).position(scroll);
-        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight);
-        frame.render_stateful_widget(scrollbar, area, &mut state);
-    }
 }
 
 fn render_input(frame: &mut Frame, app: &App, area: Rect) {
@@ -274,12 +436,14 @@ fn render_input(frame: &mut Frame, app: &App, area: Rect) {
     };
 
     let block = Block::default()
-        .title(" Input ")
         .borders(Borders::ALL)
         .border_style(Style::default().fg(border_color));
 
     let (display, cursor_style) = if app.loading {
-        ("waiting for response...", Style::default().fg(Color::DarkGray))
+        (
+            "waiting for response...",
+            Style::default().fg(Color::DarkGray),
+        )
     } else {
         (&app.input[..], Style::default())
     };
@@ -302,8 +466,10 @@ fn render_statusbar(frame: &mut Frame, app: &App, area: Rect) {
     let left = format!(" provider: {provider}  |  model: {model}");
     let right = if let Some(ref msg) = app.status_msg {
         msg.clone()
+    } else if app.autocomplete.visible {
+        "Tab/Up/Down: navigate  |  Enter: select  |  Esc: cancel".into()
     } else {
-        "Esc: quit  |  Enter: send  |  /help for commands".into()
+        "Esc: quit  |  Enter: send  |  Tab: autocomplete".into()
     };
 
     let width = area.width as usize;
@@ -316,12 +482,66 @@ fn render_statusbar(frame: &mut Frame, app: &App, area: Rect) {
         Span::styled(right, Style::default().fg(Color::DarkGray)),
     ]);
 
-    let paragraph = Paragraph::new(line).style(
-        Style::default()
-            .bg(Color::Black)
-            .fg(Color::White),
-    );
+    let paragraph = Paragraph::new(line).style(Style::default().bg(Color::Black).fg(Color::White));
     frame.render_widget(paragraph, area);
+}
+
+fn render_autocomplete(frame: &mut Frame, app: &App) {
+    let area = frame.area();
+
+    let popup_height = (app.autocomplete.filtered.len() as u16 + 2).min(12);
+    let popup_width = area.width;
+    let x = 0;
+    let y = area.height - 4 - popup_height;
+
+    let area = Rect {
+        x,
+        y,
+        width: popup_width,
+        height: popup_height,
+    };
+
+    frame.render_widget(Clear, area);
+
+    let items: Vec<ListItem> = app
+        .autocomplete
+        .filtered
+        .iter()
+        .map(|cmd| {
+            let name = format!("/{}", cmd.name);
+            let desc = if cmd.subcommands.is_empty() {
+                cmd.description.clone()
+            } else {
+                let subs: Vec<&str> = cmd.subcommands.iter().map(|s| s.name.as_str()).collect();
+                format!("{} [{}]", cmd.description, subs.join("|"))
+            };
+            ListItem::new(Line::from(vec![
+                Span::styled(
+                    format!("{name:<14}"),
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(desc, Style::default().fg(Color::DarkGray)),
+            ]))
+        })
+        .collect();
+
+    let list = List::new(items)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Cyan)),
+        )
+        .highlight_style(
+            Style::default()
+                .bg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol("> ");
+
+    let mut state = app.autocomplete.state.clone();
+    frame.render_stateful_widget(list, area, &mut state);
 }
 
 // ---------------------------------------------------------------------------
@@ -333,6 +553,7 @@ enum AppEvent {
     CommandResponse(String),
     ErrorResponse(String),
     StatusUpdate(StatusData),
+    CommandsLoaded(Vec<CommandInfo>),
 }
 
 fn spawn_chat_task(base: String, message: String, tx: mpsc::UnboundedSender<AppEvent>) {
@@ -398,6 +619,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let (tx, mut rx) = mpsc::unbounded_channel::<AppEvent>();
 
+    // Fetch commands for autocomplete
+    {
+        let cmd_tx = tx.clone();
+        let cmd_base = base_url.clone();
+        tokio::spawn(async move {
+            let cmds = fetch_commands(&cmd_base).await;
+            let _ = cmd_tx.send(AppEvent::CommandsLoaded(cmds));
+        });
+    }
+
     // Spawn periodic status refresh
     {
         let status_tx = tx.clone();
@@ -426,6 +657,46 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if key.kind != KeyEventKind::Press {
                     continue;
                 }
+
+                // --- Autocomplete mode ---
+                if app.autocomplete.visible {
+                    match key.code {
+                        KeyCode::Esc => {
+                            app.autocomplete.hide();
+                        }
+                        KeyCode::Up => {
+                            app.autocomplete.prev();
+                        }
+                        KeyCode::Down | KeyCode::Tab => {
+                            app.autocomplete.next();
+                        }
+                        KeyCode::Enter => {
+                            if let Some(cmd) = app.autocomplete.selected_command() {
+                                app.input = format!("/{} ", cmd.name);
+                            }
+                            app.autocomplete.hide();
+                        }
+                        KeyCode::Char(c) => {
+                            app.input.push(c);
+                            app.autocomplete.filter(&app.input);
+                            if app.autocomplete.filtered.is_empty() {
+                                app.autocomplete.hide();
+                            }
+                        }
+                        KeyCode::Backspace => {
+                            app.input.pop();
+                            if app.input.is_empty() || !app.input.starts_with('/') {
+                                app.autocomplete.hide();
+                            } else {
+                                app.autocomplete.filter(&app.input);
+                            }
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
+
+                // --- Normal mode ---
                 match key.code {
                     KeyCode::Esc => {
                         app.quit = true;
@@ -445,25 +716,44 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 app.status_msg = Some("session cleared".into());
                                 continue;
                             }
+                            if input == "/exit" || input == "/quit" {
+                                app.quit = true;
+                                continue;
+                            }
                             app.push_message(ChatEntry::System(format!(">>> {input}")));
                             app.loading = true;
-                            spawn_command_task(
-                                app.base_url.clone(),
-                                input,
-                                tx.clone(),
-                            );
+                            spawn_command_task(app.base_url.clone(), input, tx.clone());
                         } else {
                             app.push_message(ChatEntry::User(input.clone()));
                             app.loading = true;
-                            spawn_chat_task(
-                                app.base_url.clone(),
-                                input,
-                                tx.clone(),
-                            );
+                            spawn_chat_task(app.base_url.clone(), input, tx.clone());
+                        }
+                    }
+                    KeyCode::Tab => {
+                        // Open autocomplete with all commands if input is empty or just `/`
+                        if app.input.is_empty() || app.input == "/" {
+                            app.input = "/".to_string();
+                            let cmds = app.autocomplete.items.clone();
+                            if !cmds.is_empty() {
+                                app.autocomplete.show(cmds, &app.input);
+                            }
+                        } else if app.input.starts_with('/') {
+                            // Filter existing commands
+                            let cmds = app.autocomplete.items.clone();
+                            if !cmds.is_empty() {
+                                app.autocomplete.show(cmds, &app.input);
+                            }
                         }
                     }
                     KeyCode::Char(c) => {
                         app.input.push(c);
+                        // Auto-open autocomplete when user types `/`
+                        if app.input == "/" {
+                            let cmds = app.autocomplete.items.clone();
+                            if !cmds.is_empty() {
+                                app.autocomplete.show(cmds, &app.input);
+                            }
+                        }
                     }
                     KeyCode::Backspace => {
                         app.input.pop();
@@ -509,6 +799,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 AppEvent::StatusUpdate(status) => {
                     app.provider = status.provider;
                     app.model = status.model;
+                }
+                AppEvent::CommandsLoaded(cmds) => {
+                    app.autocomplete.items = cmds;
                 }
             }
         }
