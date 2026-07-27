@@ -1,5 +1,5 @@
 [package]
-name = "bimo"
+name = "bimo_api"
 version = "0.1.0"
 edition = "2024"
 description = "Bimo — a general-purpose coding agent"
