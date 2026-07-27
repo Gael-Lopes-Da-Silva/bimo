@@ -245,6 +245,29 @@ impl Agent {
                     });
                 }
             }
+            "tree" => {
+                if let Some(index) = ctx.tree_fork_index {
+                    let forked = self.fork_session(index)?;
+                    self.session = forked;
+                    return Ok(CommandResult {
+                        command: "tree".into(),
+                        output: format!(
+                            "Forked to new session {} at message {}.",
+                            &self.session.id[..8.min(self.session.id.len())],
+                            index
+                        ),
+                        data: None,
+                    });
+                }
+                if let Some(index) = ctx.tree_revert_index {
+                    self.revert_session(index)?;
+                    return Ok(CommandResult {
+                        command: "tree".into(),
+                        output: format!("Reverted to message {}. {} messages remaining.", index, self.session.message_count()),
+                        data: None,
+                    });
+                }
+            }
             _ => {}
         }
 
@@ -360,6 +383,20 @@ impl Agent {
         Session::delete_saved(id)
     }
 
+    /// Fork the current session at the given message index.
+    /// Creates a new session with messages 0..=index and switches to it.
+    pub fn fork_session(&mut self, index: usize) -> Result<Session> {
+        let forked = self.session.fork(index)?;
+        Ok(forked)
+    }
+
+    /// Revert the current session by discarding all messages after the given index.
+    /// Saves the truncated session to disk.
+    pub fn revert_session(&mut self, index: usize) -> Result<()> {
+        self.session.revert(index)?;
+        self.session.save()
+    }
+
     // -----------------------------------------------------------------------
     // Internal helpers
     // -----------------------------------------------------------------------
@@ -373,6 +410,7 @@ impl Agent {
             available_models: self.available_models.clone(),
             session_id: self.session.id.clone(),
             session_message_count: self.session.message_count(),
+            session_messages: self.session.messages.clone(),
             provider_ids: providers.iter().map(|p| p.id.clone()).collect(),
             provider_names: providers.iter().map(|p| p.name.clone()).collect(),
             needs_configuration: self.needs_configuration(),
@@ -380,6 +418,8 @@ impl Agent {
             saved_sessions,
             compact_requested: false,
             has_runtime: self.runtime.is_some(),
+            tree_fork_index: None,
+            tree_revert_index: None,
         }
     }
 

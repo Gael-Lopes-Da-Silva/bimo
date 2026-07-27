@@ -209,6 +209,37 @@ impl Session {
         Ok(())
     }
 
+    /// Create a new session forked from this one, keeping only messages up to (and
+    /// including) the given index. The new session is saved and returned.
+    pub fn fork(&self, index: usize) -> Result<Self> {
+        if index >= self.messages.len() {
+            return Err(BimoError::Session(format!(
+                "index {} out of range (session has {} messages)",
+                index,
+                self.messages.len()
+            )));
+        }
+        let mut forked = Self::new();
+        forked.messages = self.messages[..=index].to_vec();
+        forked.updated_at = Utc::now();
+        forked.save()?;
+        Ok(forked)
+    }
+
+    /// Revert the session by discarding all messages after the given index.
+    pub fn revert(&mut self, index: usize) -> Result<()> {
+        if index >= self.messages.len() {
+            return Err(BimoError::Session(format!(
+                "index {} out of range (session has {} messages)",
+                index,
+                self.messages.len()
+            )));
+        }
+        self.messages.truncate(index + 1);
+        self.updated_at = Utc::now();
+        Ok(())
+    }
+
     /// Compact the session by replacing the conversation with a summary.
     /// This keeps the first system message (if any) and replaces everything
     /// else with a single system message containing the summary.
