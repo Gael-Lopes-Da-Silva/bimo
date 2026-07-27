@@ -125,6 +125,11 @@ pub struct CommandHelpEntry {
     pub description: String,
 }
 
+#[derive(Debug, Serialize)]
+pub struct CommandsData {
+    pub commands: Vec<crate::command::CommandInfo>,
+}
+
 // ---------------------------------------------------------------------------
 // BimoApi — the public interface
 // ---------------------------------------------------------------------------
@@ -244,14 +249,14 @@ impl BimoApi {
     // Commands
     // -----------------------------------------------------------------------
 
-    pub fn execute_command(&mut self, req: CommandRequest) -> ApiResponse {
+    pub async fn execute_command(&mut self, req: CommandRequest) -> ApiResponse {
         let input = if req.command.starts_with('/') {
             req.command
         } else {
             format!("/{}", req.command)
         };
 
-        match self.agent.execute_command(&input) {
+        match self.agent.execute_command(&input).await {
             Ok(result) => ApiResponse::ok(result),
             Err(e) => ApiResponse::err(e),
         }
@@ -283,5 +288,11 @@ impl BimoApi {
             })
             .collect();
         ApiResponse::ok(HelpData { commands })
+    }
+
+    /// Return full command metadata for client autocompletion.
+    pub fn list_commands(&self) -> ApiResponse {
+        let commands = self.agent.command_registry.list_detailed();
+        ApiResponse::ok(CommandsData { commands })
     }
 }

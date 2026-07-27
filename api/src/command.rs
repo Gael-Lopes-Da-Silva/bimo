@@ -1,4 +1,6 @@
 use crate::error::{BimoError, Result};
+use crate::session::SessionInfo;
+use crate::tools::Tool;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -11,6 +13,28 @@ pub struct CommandResult {
     pub command: String,
     pub output: String,
     pub data: Option<serde_json::Value>,
+}
+
+// ---------------------------------------------------------------------------
+// Command metadata — for autocompletion
+// ---------------------------------------------------------------------------
+
+/// Full metadata about a slash command, suitable for client autocompletion.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommandInfo {
+    pub name: String,
+    pub description: String,
+    pub subcommands: Vec<SubcommandInfo>,
+    #[serde(rename = "async")]
+    pub async_command: bool,
+}
+
+/// Metadata about a subcommand (e.g. `/session list`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubcommandInfo {
+    pub name: String,
+    pub description: String,
+    pub usage: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -30,6 +54,33 @@ pub trait SlashCommand: Send + Sync {
 
     /// Execute the command. `args` is everything after the command word.
     fn execute(&self, ctx: &mut CommandContext, args: &str) -> Result<CommandResult>;
+
+    /// Return full metadata for autocompletion. Override to add subcommands.
+    fn command_info(&self) -> CommandInfo {
+        CommandInfo {
+            name: self.name().to_string(),
+            description: self.description().to_string(),
+            subcommands: vec![],
+            async_command: false,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Async command trait — for commands that need await
+// ---------------------------------------------------------------------------
+
+/// A slash command that requires async execution.
+pub trait AsyncSlashCommand: Send + Sync {
+    fn name(&self) -> &str;
+    fn description(&self) -> &str;
+    fn execute<'a>(
+        &'a self,
+        ctx: &'a mut CommandContext,
+        args: &'a str,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<CommandResult>> + Send + 'a>,
+    >;
 }
 
 // ---------------------------------------------------------------------------
@@ -46,6 +97,18 @@ pub struct CommandContext {
     pub provider_ids: Vec<String>,
     pub provider_names: Vec<String>,
     pub needs_configuration: bool,
+
+    // Tools
+    pub tools: Vec<Tool>,
+
+    // Session management
+    pub saved_sessions: Vec<SessionInfo>,
+
+    // Compaction — set to true by /compact command, agent handles the async work
+    pub compact_requested: bool,
+
+    // Provider runtime info (needed for compact to call the provider)
+    pub has_runtime: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -54,24 +117,34 @@ pub struct CommandContext {
 
 pub struct CommandRegistry {
     commands: HashMap<String, Box<dyn SlashCommand>>,
+    async_commands: HashMap<String, Box<dyn AsyncSlashCommand>>,
 }
 
 impl CommandRegistry {
     pub fn new() -> Self {
         let mut reg = Self {
             commands: HashMap::new(),
+            async_commands: HashMap::new(),
         };
-        // Register built-in commands
+        // Register built-in sync commands
         reg.register(Box::new(HelpCommand));
         reg.register(Box::new(StatusCommand));
         reg.register(Box::new(ClearCommand));
         reg.register(Box::new(ModelCommand));
         reg.register(Box::new(ProviderCommand));
+        reg.register(Box::new(ToolsCommand));
+        reg.register(Box::new(SessionCommand));
+        // Register async commands
+        reg.register_async(Box::new(CompactCommand));
         reg
     }
 
     pub fn register(&mut self, cmd: Box<dyn SlashCommand>) {
         self.commands.insert(cmd.name().to_string(), cmd);
+    }
+
+    pub fn register_async(&mut self, cmd: Box<dyn AsyncSlashCommand>) {
+        self.async_commands.insert(cmd.name().to_string(), cmd);
     }
 
     /// Dispatch a slash command string (e.g. "/help" or "/model select gpt-4").
@@ -85,12 +158,43 @@ impl CommandRegistry {
         let cmd_name = parts[0];
         let args = parts.get(1).copied().unwrap_or("");
 
-        match self.commands.get(cmd_name) {
-            Some(cmd) => cmd.execute(ctx, args),
-            None => Err(BimoError::Command(format!(
-                "unknown command '/{cmd_name}'. Type /help to see available commands."
-            ))),
+        if let Some(cmd) = self.commands.get(cmd_name) {
+            return cmd.execute(ctx, args);
         }
+        if self.async_commands.contains_key(cmd_name) {
+            return Err(BimoError::Command(format!(
+                "command '/{cmd_name}' requires async dispatch"
+            )));
+        }
+        Err(BimoError::Command(format!(
+            "unknown command '/{cmd_name}'. Type /help to see available commands."
+        )))
+    }
+
+    /// Dispatch an async slash command.
+    pub async fn dispatch_async(
+        &self,
+        input: &str,
+        ctx: &mut CommandContext,
+    ) -> Result<CommandResult> {
+        let input = input.trim();
+        if !input.starts_with('/') {
+            return Err(BimoError::Command("not a slash command".into()));
+        }
+        let rest = &input[1..];
+        let parts: Vec<&str> = rest.splitn(2, ' ').collect();
+        let cmd_name = parts[0];
+        let args = parts.get(1).copied().unwrap_or("");
+
+        if let Some(cmd) = self.commands.get(cmd_name) {
+            return cmd.execute(ctx, args);
+        }
+        if let Some(cmd) = self.async_commands.get(cmd_name) {
+            return cmd.execute(ctx, args).await;
+        }
+        Err(BimoError::Command(format!(
+            "unknown command '/{cmd_name}'. Type /help to see available commands."
+        )))
     }
 
     /// List all registered commands as (name, description) pairs.
@@ -100,7 +204,29 @@ impl CommandRegistry {
             .values()
             .map(|c| (c.name(), c.description()))
             .collect();
+        for cmd in self.async_commands.values() {
+            cmds.push((cmd.name(), cmd.description()));
+        }
         cmds.sort_by_key(|(name, _)| *name);
+        cmds
+    }
+
+    /// List all commands with full metadata for autocompletion.
+    pub fn list_detailed(&self) -> Vec<CommandInfo> {
+        let mut cmds: Vec<CommandInfo> = self
+            .commands
+            .values()
+            .map(|c| c.command_info())
+            .collect();
+        for cmd in self.async_commands.values() {
+            cmds.push(CommandInfo {
+                name: cmd.name().to_string(),
+                description: cmd.description().to_string(),
+                subcommands: vec![],
+                async_command: true,
+            });
+        }
+        cmds.sort_by(|a, b| a.name.cmp(&b.name));
         cmds
     }
 }
@@ -121,9 +247,6 @@ impl SlashCommand for HelpCommand {
     }
 
     fn execute(&self, ctx: &mut CommandContext, _args: &str) -> Result<CommandResult> {
-        // Help is special: it reads from the registry, but since we don't have
-        // the registry here, we build a static list from the known commands.
-        // This is OK for the built-in set; custom commands would need the registry.
         let _ = ctx;
         let output = "\
 Available commands:
@@ -133,6 +256,9 @@ Available commands:
   /provider   — list providers, select, or configure a provider
   /model      — list models, or select a model
   /clear      — clear the current conversation session
+  /tools      — list all available agent tools
+  /session    — manage sessions (list, save, resume, delete, info)
+  /compact    — compact the session context into a summary
 ";
         Ok(CommandResult {
             command: "help".into(),
@@ -222,7 +348,27 @@ impl SlashCommand for ModelCommand {
     }
 
     fn description(&self) -> &str {
-        "list models or select a model (/model select <id> or /model list)"
+        "list models or select a model"
+    }
+
+    fn command_info(&self) -> CommandInfo {
+        CommandInfo {
+            name: "model".into(),
+            description: self.description().into(),
+            subcommands: vec![
+                SubcommandInfo {
+                    name: "list".into(),
+                    description: "list available models for the selected provider".into(),
+                    usage: "/model list".into(),
+                },
+                SubcommandInfo {
+                    name: "select".into(),
+                    description: "select a model by id".into(),
+                    usage: "/model select <model-id>".into(),
+                },
+            ],
+            async_command: false,
+        }
     }
 
     fn execute(&self, ctx: &mut CommandContext, args: &str) -> Result<CommandResult> {
@@ -289,7 +435,32 @@ impl SlashCommand for ProviderCommand {
     }
 
     fn description(&self) -> &str {
-        "list, select, or configure providers (/provider list|select|configure)"
+        "list, select, or configure providers"
+    }
+
+    fn command_info(&self) -> CommandInfo {
+        CommandInfo {
+            name: "provider".into(),
+            description: self.description().into(),
+            subcommands: vec![
+                SubcommandInfo {
+                    name: "list".into(),
+                    description: "list all available providers".into(),
+                    usage: "/provider list".into(),
+                },
+                SubcommandInfo {
+                    name: "select".into(),
+                    description: "select a provider by id".into(),
+                    usage: "/provider select <provider-id>".into(),
+                },
+                SubcommandInfo {
+                    name: "configure".into(),
+                    description: "configure a provider's base URL and API key".into(),
+                    usage: "/provider configure <provider-id>".into(),
+                },
+            ],
+            async_command: false,
+        }
     }
 
     fn execute(&self, ctx: &mut CommandContext, args: &str) -> Result<CommandResult> {
@@ -336,8 +507,6 @@ impl SlashCommand for ProviderCommand {
                 })
             }
             Some("configure") => {
-                // This is a simplified version — the full configure flow is
-                // handled at the API layer where we can do async work.
                 let provider_id = parts.get(1).ok_or_else(|| {
                     BimoError::Command("usage: /provider configure <provider-id>".into())
                 })?;
@@ -360,5 +529,289 @@ impl SlashCommand for ProviderCommand {
                 "unknown subcommand '{other}'. Usage: /provider [list|select|configure]"
             ))),
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// /tools
+// ---------------------------------------------------------------------------
+
+struct ToolsCommand;
+
+impl SlashCommand for ToolsCommand {
+    fn name(&self) -> &str {
+        "tools"
+    }
+
+    fn description(&self) -> &str {
+        "list all available agent tools"
+    }
+
+    fn execute(&self, ctx: &mut CommandContext, _args: &str) -> Result<CommandResult> {
+        if ctx.tools.is_empty() {
+            return Ok(CommandResult {
+                command: "tools".into(),
+                output: "No tools registered.".into(),
+                data: Some(serde_json::json!([])),
+            });
+        }
+
+        let lines: Vec<String> = ctx
+            .tools
+            .iter()
+            .map(|t| {
+                let params: Vec<String> = t
+                    .parameters
+                    .iter()
+                    .map(|p| {
+                        let req = if p.required { " *" } else { "" };
+                        format!("    {} ({}){req}", p.name, p.parameter_type)
+                    })
+                    .collect();
+                let param_str = if params.is_empty() {
+                    String::new()
+                } else {
+                    format!("\n  Parameters:\n{}", params.join("\n"))
+                };
+                format!("  {} — {}{param_str}", t.name, t.description)
+            })
+            .collect();
+
+        let output = format!("Available tools ({}):\n{}", ctx.tools.len(), lines.join("\n\n"));
+        let data = serde_json::to_value(&ctx.tools).ok();
+
+        Ok(CommandResult {
+            command: "tools".into(),
+            output,
+            data,
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// /session
+// ---------------------------------------------------------------------------
+
+struct SessionCommand;
+
+impl SlashCommand for SessionCommand {
+    fn name(&self) -> &str {
+        "session"
+    }
+
+    fn description(&self) -> &str {
+        "manage sessions"
+    }
+
+    fn command_info(&self) -> CommandInfo {
+        CommandInfo {
+            name: "session".into(),
+            description: self.description().into(),
+            subcommands: vec![
+                SubcommandInfo {
+                    name: "list".into(),
+                    description: "list all saved sessions".into(),
+                    usage: "/session list".into(),
+                },
+                SubcommandInfo {
+                    name: "save".into(),
+                    description: "save the current session to disk".into(),
+                    usage: "/session save".into(),
+                },
+                SubcommandInfo {
+                    name: "resume".into(),
+                    description: "resume a saved session by id (supports prefix)".into(),
+                    usage: "/session resume <session-id>".into(),
+                },
+                SubcommandInfo {
+                    name: "delete".into(),
+                    description: "delete a saved session".into(),
+                    usage: "/session delete <session-id>".into(),
+                },
+                SubcommandInfo {
+                    name: "info".into(),
+                    description: "show current session details".into(),
+                    usage: "/session info".into(),
+                },
+                SubcommandInfo {
+                    name: "purge".into(),
+                    description: "delete all saved sessions".into(),
+                    usage: "/session purge".into(),
+                },
+            ],
+            async_command: false,
+        }
+    }
+
+    fn execute(&self, ctx: &mut CommandContext, args: &str) -> Result<CommandResult> {
+        let parts: Vec<&str> = args.split_whitespace().collect();
+        match parts.first().copied() {
+            Some("list") | None => {
+                if ctx.saved_sessions.is_empty() {
+                    return Ok(CommandResult {
+                        command: "session".into(),
+                        output: "No saved sessions.".into(),
+                        data: Some(serde_json::json!([])),
+                    });
+                }
+                let lines: Vec<String> = ctx
+                    .saved_sessions
+                    .iter()
+                    .map(|s| {
+                        let active = if s.id == ctx.session_id {
+                            " (active)"
+                        } else {
+                            ""
+                        };
+                        format!(
+                            "  {} — {} messages, updated {}{active}",
+                            &s.id[..8.min(s.id.len())],
+                            s.message_count,
+                            s.updated_at.format("%Y-%m-%d %H:%M UTC"),
+                        )
+                    })
+                    .collect();
+                let output = format!(
+                    "Saved sessions ({}):\n{}",
+                    ctx.saved_sessions.len(),
+                    lines.join("\n")
+                );
+                let data = serde_json::to_value(&ctx.saved_sessions).ok();
+                Ok(CommandResult {
+                    command: "session".into(),
+                    output,
+                    data,
+                })
+            }
+            Some("save") => {
+                Ok(CommandResult {
+                    command: "session".into(),
+                    output: "Session saved.".into(),
+                    data: None,
+                })
+            }
+            Some("resume") => {
+                let id = parts.get(1).ok_or_else(|| {
+                    BimoError::Command("usage: /session resume <session-id>".into())
+                })?;
+                // Try full id match or prefix match
+                let found = ctx
+                    .saved_sessions
+                    .iter()
+                    .find(|s| s.id == *id || s.id.starts_with(id));
+                match found {
+                    Some(info) => Ok(CommandResult {
+                        command: "session".into(),
+                        output: format!(
+                            "Resumed session {} ({} messages).",
+                            &info.id[..8.min(info.id.len())],
+                            info.message_count,
+                        ),
+                        data: Some(serde_json::json!({ "session_id": info.id })),
+                    }),
+                    None => Err(BimoError::Command(format!(
+                        "session '{id}' not found. Use /session list."
+                    ))),
+                }
+            }
+            Some("delete") => {
+                let id = parts.get(1).ok_or_else(|| {
+                    BimoError::Command("usage: /session delete <session-id>".into())
+                })?;
+                let found = ctx
+                    .saved_sessions
+                    .iter()
+                    .find(|s| s.id == *id || s.id.starts_with(id));
+                match found {
+                    Some(info) => Ok(CommandResult {
+                        command: "session".into(),
+                        output: format!("Deleted session {}.", &info.id[..8.min(info.id.len())]),
+                        data: Some(serde_json::json!({ "session_id": info.id })),
+                    }),
+                    None => Err(BimoError::Command(format!(
+                        "session '{id}' not found. Use /session list."
+                    ))),
+                }
+            }
+            Some("info") => {
+                let output = format!(
+                    "Session:     {}\n\
+                     Messages:    {}\n\
+                     Created:     {}\n\
+                     Last active: {}",
+                    ctx.session_id,
+                    ctx.session_message_count,
+                    "—", // timestamps handled at agent level
+                    "—",
+                );
+                let data = serde_json::json!({
+                    "session_id": ctx.session_id,
+                    "message_count": ctx.session_message_count,
+                });
+                Ok(CommandResult {
+                    command: "session".into(),
+                    output,
+                    data: Some(data),
+                })
+            }
+            Some("purge") => {
+                Ok(CommandResult {
+                    command: "session".into(),
+                    output: "All saved sessions purged.".into(),
+                    data: None,
+                })
+            }
+            Some(other) => Err(BimoError::Command(format!(
+                "unknown subcommand '{other}'. Usage: /session [list|save|resume|delete|info|purge]"
+            ))),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// /compact (async)
+// ---------------------------------------------------------------------------
+
+struct CompactCommand;
+
+impl AsyncSlashCommand for CompactCommand {
+    fn name(&self) -> &str {
+        "compact"
+    }
+
+    fn description(&self) -> &str {
+        "compact the session context into a summary"
+    }
+
+    fn execute<'a>(
+        &'a self,
+        ctx: &'a mut CommandContext,
+        _args: &'a str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<CommandResult>> + Send + 'a>>
+    {
+        Box::pin(async move {
+            if ctx.session_message_count == 0 {
+                return Ok(CommandResult {
+                    command: "compact".into(),
+                    output: "Session is already empty, nothing to compact.".into(),
+                    data: None,
+                });
+            }
+
+            if !ctx.has_runtime {
+                return Err(BimoError::Command(
+                    "no provider selected. Select a provider first with /provider.".into(),
+                ));
+            }
+
+            // Signal to the agent that compaction is needed
+            ctx.compact_requested = true;
+
+            Ok(CommandResult {
+                command: "compact".into(),
+                output: "Compacting session context...".into(),
+                data: Some(serde_json::json!({ "status": "compacting" })),
+            })
+        })
     }
 }

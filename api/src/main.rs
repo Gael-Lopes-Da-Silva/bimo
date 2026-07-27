@@ -39,6 +39,7 @@ async fn main() {
         .route("/api/session", get(get_session))
         .route("/api/session/clear", post(clear_session))
         .route("/api/command", post(execute_command))
+        .route("/api/commands", get(list_commands))
         .route("/api/status", get(status))
         .route("/api/help", get(help))
         .layer(cors)
@@ -131,7 +132,7 @@ async fn execute_command(
     Json(req): Json<CommandRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     let mut api = state.lock().await;
-    api_response_to_http(api.execute_command(req))
+    api_response_to_http(api.execute_command(req).await)
 }
 
 async fn status(State(state): State<AppState>) -> Json<ApiResponse> {
@@ -142,4 +143,9 @@ async fn status(State(state): State<AppState>) -> Json<ApiResponse> {
 async fn help(State(state): State<AppState>) -> Json<ApiResponse> {
     let api = state.lock().await;
     Json(api.help())
+}
+
+async fn list_commands(State(state): State<AppState>) -> Json<ApiResponse> {
+    let api = state.lock().await;
+    Json(api.list_commands())
 }

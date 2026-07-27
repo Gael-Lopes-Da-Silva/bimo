@@ -6,6 +6,7 @@ pub mod error;
 pub mod model;
 pub mod provider;
 pub mod session;
+pub mod tools;
 
 // Re-export the main API types for convenience.
 pub use api::BimoApi;
