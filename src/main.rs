@@ -2,7 +2,6 @@ use axum::{
     Router,
     extract::{Json, State},
     http::StatusCode,
-    response::IntoResponse,
     routing::{get, post},
 };
 use bimo::api::*;
@@ -11,12 +10,10 @@ use tokio::sync::Mutex;
 use tower_http::cors::{Any, CorsLayer};
 use tracing_subscriber::EnvFilter;
 
-/// Shared application state behind the Axum handlers.
 type AppState = Arc<Mutex<BimoApi>>;
 
 #[tokio::main]
 async fn main() {
-    // Initialize tracing
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
@@ -32,22 +29,16 @@ async fn main() {
         .allow_headers(Any);
 
     let app = Router::new()
-        // Provider routes
         .route("/api/provider/list", get(list_providers))
         .route("/api/provider/select", post(select_provider))
         .route("/api/provider/configure", post(configure_provider))
         .route("/api/provider/add", post(add_custom_provider))
-        // Model routes
         .route("/api/model/list", get(list_models))
         .route("/api/model/select", post(select_model))
-        // Chat
         .route("/api/chat", post(chat))
-        // Session
         .route("/api/session", get(get_session))
         .route("/api/session/clear", post(clear_session))
-        // Commands
         .route("/api/command", post(execute_command))
-        // Status & help
         .route("/api/status", get(status))
         .route("/api/help", get(help))
         .layer(cors)
@@ -66,11 +57,16 @@ async fn main() {
     axum::serve(listener, app).await.expect("server failed");
 }
 
-// ---------------------------------------------------------------------------
-// Handler functions
-// ---------------------------------------------------------------------------
+fn api_response_to_http(resp: ApiResponse) -> (StatusCode, Json<ApiResponse>) {
+    let status = if resp.success {
+        StatusCode::OK
+    } else {
+        StatusCode::BAD_REQUEST
+    };
+    (status, Json(resp))
+}
 
-async fn list_providers(State(state): State<AppState>) -> impl IntoResponse {
+async fn list_providers(State(state): State<AppState>) -> Json<ApiResponse> {
     let api = state.lock().await;
     Json(api.list_providers())
 }
@@ -78,28 +74,28 @@ async fn list_providers(State(state): State<AppState>) -> impl IntoResponse {
 async fn select_provider(
     State(state): State<AppState>,
     Json(req): Json<SelectProviderRequest>,
-) -> impl IntoResponse {
+) -> (StatusCode, Json<ApiResponse>) {
     let mut api = state.lock().await;
-    Json(api.select_provider(req).await)
+    api_response_to_http(api.select_provider(req).await)
 }
 
 async fn configure_provider(
     State(state): State<AppState>,
     Json(req): Json<ConfigureProviderRequest>,
-) -> impl IntoResponse {
+) -> (StatusCode, Json<ApiResponse>) {
     let mut api = state.lock().await;
-    Json(api.configure_provider(req))
+    api_response_to_http(api.configure_provider(req))
 }
 
 async fn add_custom_provider(
     State(state): State<AppState>,
     Json(req): Json<AddCustomProviderRequest>,
-) -> impl IntoResponse {
+) -> (StatusCode, Json<ApiResponse>) {
     let mut api = state.lock().await;
-    Json(api.add_custom_provider(req))
+    api_response_to_http(api.add_custom_provider(req))
 }
 
-async fn list_models(State(state): State<AppState>) -> impl IntoResponse {
+async fn list_models(State(state): State<AppState>) -> Json<ApiResponse> {
     let mut api = state.lock().await;
     Json(api.list_models().await)
 }
@@ -107,22 +103,25 @@ async fn list_models(State(state): State<AppState>) -> impl IntoResponse {
 async fn select_model(
     State(state): State<AppState>,
     Json(req): Json<SelectModelRequest>,
-) -> impl IntoResponse {
+) -> (StatusCode, Json<ApiResponse>) {
     let mut api = state.lock().await;
-    Json(api.select_model(req))
+    api_response_to_http(api.select_model(req))
 }
 
-async fn chat(State(state): State<AppState>, Json(req): Json<ChatRequest>) -> impl IntoResponse {
+async fn chat(
+    State(state): State<AppState>,
+    Json(req): Json<ChatRequest>,
+) -> (StatusCode, Json<ApiResponse>) {
     let mut api = state.lock().await;
-    Json(api.chat(req).await)
+    api_response_to_http(api.chat(req).await)
 }
 
-async fn get_session(State(state): State<AppState>) -> impl IntoResponse {
+async fn get_session(State(state): State<AppState>) -> Json<ApiResponse> {
     let api = state.lock().await;
     Json(api.get_session())
 }
 
-async fn clear_session(State(state): State<AppState>) -> impl IntoResponse {
+async fn clear_session(State(state): State<AppState>) -> Json<ApiResponse> {
     let mut api = state.lock().await;
     Json(api.clear_session())
 }
@@ -130,23 +129,17 @@ async fn clear_session(State(state): State<AppState>) -> impl IntoResponse {
 async fn execute_command(
     State(state): State<AppState>,
     Json(req): Json<CommandRequest>,
-) -> impl IntoResponse {
+) -> (StatusCode, Json<ApiResponse>) {
     let mut api = state.lock().await;
-    let response = api.execute_command(req);
-    let status = if response.success {
-        StatusCode::OK
-    } else {
-        StatusCode::BAD_REQUEST
-    };
-    (status, Json(response))
+    api_response_to_http(api.execute_command(req))
 }
 
-async fn status(State(state): State<AppState>) -> impl IntoResponse {
+async fn status(State(state): State<AppState>) -> Json<ApiResponse> {
     let api = state.lock().await;
     Json(api.status())
 }
 
-async fn help(State(state): State<AppState>) -> impl IntoResponse {
+async fn help(State(state): State<AppState>) -> Json<ApiResponse> {
     let api = state.lock().await;
     Json(api.help())
 }

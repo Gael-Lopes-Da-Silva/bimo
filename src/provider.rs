@@ -1,4 +1,4 @@
-use crate::config::{AppConfig, CustomProviderConfig, ProviderPersistedConfig};
+use crate::config::{AppConfig, CustomProviderConfig};
 use crate::error::{BimoError, Result};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};

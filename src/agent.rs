@@ -1,9 +1,18 @@
 use crate::command::{CommandContext, CommandRegistry, CommandResult};
-use crate::config::{AppConfig, CustomProviderConfig};
+use crate::config::{AppConfig, CustomProviderConfig, ProviderPersistedConfig};
 use crate::error::{BimoError, Result};
 use crate::model::{self, ModelInfo};
-use crate::provider::{self, ProviderInfo, ProviderRegistry, ProviderRuntime};
+use crate::provider::{self, ProviderInfo, ProviderRegistry, ProviderRuntime, UsageInfo};
 use crate::session::Session;
+
+/// The response from a chat interaction.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ChatResponse {
+    pub content: String,
+    pub model: Option<String>,
+    pub usage: Option<UsageInfo>,
+    pub session_id: String,
+}
 
 /// The core agent that holds all state and coordinates operations.
 pub struct Agent {
@@ -23,7 +32,6 @@ impl Agent {
         let command_registry = CommandRegistry::new();
         let session = Session::new();
 
-        // If a provider was previously selected, try to restore it.
         let mut agent = Self {
             config,
             session,
@@ -34,19 +42,8 @@ impl Agent {
         };
 
         if let Some(pid) = agent.config.selected_provider.clone() {
-            if agent
-                .provider_registry
-                .resolve_runtime(&pid, &agent.config)
-                .is_ok()
-            {
-                agent.runtime = Some(
-                    agent
-                        .provider_registry
-                        .resolve_runtime(&pid, &agent.config)
-                        .unwrap(),
-                );
-                // Try to load saved models (we don't persist them, so re-fetch
-                // will happen lazily).
+            if let Ok(rt) = agent.provider_registry.resolve_runtime(&pid, &agent.config) {
+                agent.runtime = Some(rt);
             }
         }
 
@@ -62,12 +59,10 @@ impl Agent {
     // Provider management
     // -----------------------------------------------------------------------
 
-    /// List all available providers.
     pub fn list_providers(&self) -> Vec<ProviderInfo> {
         self.provider_registry.list_all(&self.config)
     }
 
-    /// Select a provider by id. Clears any cached runtime and available models.
     pub async fn select_provider(&mut self, provider_id: &str) -> Result<ProviderInfo> {
         let info = self
             .provider_registry
@@ -76,7 +71,6 @@ impl Agent {
             .find(|p| p.id == provider_id)
             .ok_or_else(|| BimoError::Provider(format!("unknown provider '{provider_id}'")))?;
 
-        // Try to build the runtime (may fail if API key is missing).
         let runtime = self
             .provider_registry
             .resolve_runtime(provider_id, &self.config)?;
@@ -87,19 +81,25 @@ impl Agent {
         self.config.selected_model = None;
         self.config.save()?;
 
-        // Fetch models for the newly selected provider.
         self.fetch_models().await?;
 
         Ok(info)
     }
 
-    /// Configure a provider with a custom base URL and/or API key.
     pub fn configure_provider(
         &mut self,
         provider_id: &str,
         base_url: Option<String>,
         api_key: Option<String>,
     ) -> Result<()> {
+        // Resolve the default base URL before borrowing config mutably.
+        let default_base_url = self
+            .provider_registry
+            .list_all(&self.config)
+            .iter()
+            .find(|p| p.id == provider_id)
+            .map(|p| p.default_base_url.clone());
+
         let entry = self
             .config
             .provider_configs
@@ -116,21 +116,14 @@ impl Agent {
             entry.api_key = Some(key);
         }
 
-        // If the builtin default base URL is not set yet, fill it.
         if entry.base_url.is_empty() {
-            if let Some(info) = self
-                .provider_registry
-                .list_all(&self.config)
-                .iter()
-                .find(|p| p.id == provider_id)
-            {
-                entry.base_url = info.default_base_url.clone();
+            if let Some(url) = default_base_url {
+                entry.base_url = url;
             }
         }
 
         self.config.save()?;
 
-        // Rebuild runtime if this is the currently selected provider.
         if self.config.selected_provider.as_deref() == Some(provider_id) {
             self.runtime = Some(
                 self.provider_registry
@@ -141,9 +134,7 @@ impl Agent {
         Ok(())
     }
 
-    /// Register a custom provider.
     pub fn add_custom_provider(&mut self, cp: CustomProviderConfig) -> Result<()> {
-        // Reject duplicate id with builtins
         if self
             .provider_registry
             .list_all(&self.config)
@@ -164,7 +155,6 @@ impl Agent {
     // Model management
     // -----------------------------------------------------------------------
 
-    /// Fetch available models for the currently selected provider.
     pub async fn fetch_models(&mut self) -> Result<Vec<ModelInfo>> {
         let runtime = self
             .runtime
@@ -176,12 +166,10 @@ impl Agent {
         Ok(models)
     }
 
-    /// List currently cached models.
     pub fn list_models(&self) -> &[ModelInfo] {
         &self.available_models
     }
 
-    /// Select a model by id.
     pub fn select_model(&mut self, model_id: &str) -> Result<()> {
         let exists = self.available_models.iter().any(|m| m.id == model_id);
         if !exists && !self.available_models.is_empty() {
@@ -203,7 +191,6 @@ impl Agent {
     // Chat
     // -----------------------------------------------------------------------
 
-    /// Send a user message and get a response from the provider.
     pub async fn chat(&mut self, user_message: &str) -> Result<ChatResponse> {
         let runtime = self
             .runtime
@@ -217,16 +204,9 @@ impl Agent {
             .as_deref()
             .ok_or_else(|| BimoError::Model("no model selected".into()))?;
 
-        // Add the user message to the session
         self.session.add_user_message(user_message);
-
-        // Build messages for the API call
         let messages = self.session.to_chat_messages();
-
-        // Call the provider
         let response = provider::chat_completion(&runtime, &messages, model).await?;
-
-        // Add the assistant response to the session
         self.session.add_assistant_message(&response.content);
 
         Ok(ChatResponse {
@@ -241,16 +221,13 @@ impl Agent {
     // Commands
     // -----------------------------------------------------------------------
 
-    /// Parse and execute a slash command.
     pub fn execute_command(&mut self, input: &str) -> Result<CommandResult> {
         let mut ctx = self.build_command_context();
         let result = self.command_registry.dispatch(input, &mut ctx)?;
-        // Sync state back from context
         self.sync_from_command_context(&ctx);
         Ok(result)
     }
 
-    /// Clear the current session.
     pub fn clear_session(&mut self) {
         self.session.clear();
     }
@@ -260,24 +237,15 @@ impl Agent {
     // -----------------------------------------------------------------------
 
     fn build_command_context(&self) -> CommandContext {
+        let providers = self.provider_registry.list_all(&self.config);
         CommandContext {
             selected_provider: self.config.selected_provider.clone(),
             selected_model: self.config.selected_model.clone(),
             available_models: self.available_models.clone(),
             session_id: self.session.id.clone(),
             session_message_count: self.session.message_count(),
-            provider_ids: self
-                .provider_registry
-                .list_all(&self.config)
-                .iter()
-                .map(|p| p.id.clone())
-                .collect(),
-            provider_names: self
-                .provider_registry
-                .list_all(&self.config)
-                .iter()
-                .map(|p| p.name.clone())
-                .collect(),
+            provider_ids: providers.iter().map(|p| p.id.clone()).collect(),
+            provider_names: providers.iter().map(|p| p.name.clone()).collect(),
             needs_configuration: self.needs_configuration(),
         }
     }
@@ -287,16 +255,3 @@ impl Agent {
         self.config.selected_model = ctx.selected_model.clone();
     }
 }
-
-use crate::provider::UsageInfo;
-
-/// The response from a chat interaction.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct ChatResponse {
-    pub content: String,
-    pub model: Option<String>,
-    pub usage: Option<UsageInfo>,
-    pub session_id: String,
-}
-
-use crate::config::ProviderPersistedConfig;

@@ -1,9 +1,6 @@
-use crate::agent::{Agent, ChatResponse};
-use crate::command::CommandResult;
+use crate::agent::Agent;
 use crate::config::CustomProviderConfig;
-use crate::error::{ApiErrorPayload, BimoError, Result};
-use crate::model::ModelInfo;
-use crate::provider::ProviderInfo;
+use crate::error::{ApiErrorPayload, BimoError};
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
@@ -12,24 +9,24 @@ use serde::{Deserialize, Serialize};
 
 /// The standard JSON response envelope returned by every API endpoint.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ApiResponse<T: Serialize> {
+pub struct ApiResponse {
     pub success: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub data: Option<T>,
+    pub data: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<ApiErrorPayload>,
 }
 
-impl<T: Serialize> ApiResponse<T> {
-    pub fn ok(data: T) -> Self {
+impl ApiResponse {
+    pub fn ok<T: Serialize>(data: T) -> Self {
         Self {
             success: true,
-            data: Some(data),
+            data: Some(serde_json::to_value(data).unwrap_or_default()),
             error: None,
         }
     }
 
-    pub fn err(error: BimoError) -> ApiResponse<()> {
+    pub fn err(error: BimoError) -> Self {
         ApiResponse {
             success: false,
             data: None,
@@ -37,9 +34,6 @@ impl<T: Serialize> ApiResponse<T> {
         }
     }
 }
-
-// No-data response
-pub type EmptyResponse = ApiResponse<()>;
 
 // ---------------------------------------------------------------------------
 // Request / response data types
@@ -156,31 +150,28 @@ impl BimoApi {
     // Provider endpoints
     // -----------------------------------------------------------------------
 
-    pub fn list_providers(&self) -> ApiResponse<Vec<ProviderInfo>> {
+    pub fn list_providers(&self) -> ApiResponse {
         ApiResponse::ok(self.agent.list_providers())
     }
 
-    pub async fn select_provider(
-        &mut self,
-        req: SelectProviderRequest,
-    ) -> ApiResponse<ProviderInfo> {
+    pub async fn select_provider(&mut self, req: SelectProviderRequest) -> ApiResponse {
         match self.agent.select_provider(&req.provider_id).await {
             Ok(info) => ApiResponse::ok(info),
             Err(e) => ApiResponse::err(e),
         }
     }
 
-    pub fn configure_provider(&mut self, req: ConfigureProviderRequest) -> EmptyResponse {
+    pub fn configure_provider(&mut self, req: ConfigureProviderRequest) -> ApiResponse {
         match self
             .agent
             .configure_provider(&req.provider_id, req.base_url, req.api_key)
         {
-            Ok(()) => ApiResponse::ok(()),
+            Ok(()) => ApiResponse::ok(serde_json::Value::Null),
             Err(e) => ApiResponse::err(e),
         }
     }
 
-    pub fn add_custom_provider(&mut self, req: AddCustomProviderRequest) -> EmptyResponse {
+    pub fn add_custom_provider(&mut self, req: AddCustomProviderRequest) -> ApiResponse {
         let cp = CustomProviderConfig {
             id: req.id,
             name: req.name,
@@ -193,7 +184,7 @@ impl BimoApi {
             auth_prefix: req.auth_prefix,
         };
         match self.agent.add_custom_provider(cp) {
-            Ok(()) => ApiResponse::ok(()),
+            Ok(()) => ApiResponse::ok(serde_json::Value::Null),
             Err(e) => ApiResponse::err(e),
         }
     }
@@ -202,17 +193,16 @@ impl BimoApi {
     // Model endpoints
     // -----------------------------------------------------------------------
 
-    pub async fn list_models(&mut self) -> ApiResponse<Vec<ModelInfo>> {
-        // If models are empty but a provider is selected, try fetching.
+    pub async fn list_models(&mut self) -> ApiResponse {
         if self.agent.list_models().is_empty() && self.agent.runtime.is_some() {
             let _ = self.agent.fetch_models().await;
         }
         ApiResponse::ok(self.agent.list_models().to_vec())
     }
 
-    pub fn select_model(&mut self, req: SelectModelRequest) -> EmptyResponse {
+    pub fn select_model(&mut self, req: SelectModelRequest) -> ApiResponse {
         match self.agent.select_model(&req.model_id) {
-            Ok(()) => ApiResponse::ok(()),
+            Ok(()) => ApiResponse::ok(serde_json::Value::Null),
             Err(e) => ApiResponse::err(e),
         }
     }
@@ -221,7 +211,7 @@ impl BimoApi {
     // Chat
     // -----------------------------------------------------------------------
 
-    pub async fn chat(&mut self, req: ChatRequest) -> ApiResponse<ChatData> {
+    pub async fn chat(&mut self, req: ChatRequest) -> ApiResponse {
         match self.agent.chat(&req.message).await {
             Ok(resp) => ApiResponse::ok(ChatData {
                 content: resp.content,
@@ -237,7 +227,7 @@ impl BimoApi {
     // Session
     // -----------------------------------------------------------------------
 
-    pub fn get_session(&self) -> ApiResponse<SessionData> {
+    pub fn get_session(&self) -> ApiResponse {
         ApiResponse::ok(SessionData {
             session_id: self.agent.session.id.clone(),
             messages: self.agent.session.messages.clone(),
@@ -245,17 +235,16 @@ impl BimoApi {
         })
     }
 
-    pub fn clear_session(&mut self) -> EmptyResponse {
+    pub fn clear_session(&mut self) -> ApiResponse {
         self.agent.clear_session();
-        ApiResponse::ok(())
+        ApiResponse::ok(serde_json::Value::Null)
     }
 
     // -----------------------------------------------------------------------
     // Commands
     // -----------------------------------------------------------------------
 
-    pub fn execute_command(&mut self, req: CommandRequest) -> ApiResponse<CommandResult> {
-        // Prepend the slash if the caller forgot it.
+    pub fn execute_command(&mut self, req: CommandRequest) -> ApiResponse {
         let input = if req.command.starts_with('/') {
             req.command
         } else {
@@ -272,7 +261,7 @@ impl BimoApi {
     // Status & help
     // -----------------------------------------------------------------------
 
-    pub fn status(&self) -> ApiResponse<StatusData> {
+    pub fn status(&self) -> ApiResponse {
         ApiResponse::ok(StatusData {
             provider: self.agent.config.selected_provider.clone(),
             model: self.agent.config.selected_model.clone(),
@@ -282,7 +271,7 @@ impl BimoApi {
         })
     }
 
-    pub fn help(&self) -> ApiResponse<HelpData> {
+    pub fn help(&self) -> ApiResponse {
         let commands: Vec<CommandHelpEntry> = self
             .agent
             .command_registry

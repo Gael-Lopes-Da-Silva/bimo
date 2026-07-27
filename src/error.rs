@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use std::fmt;
 
 /// The unified error type for all Bimo operations.
 ///
