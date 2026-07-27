@@ -313,7 +313,7 @@ fn draw(frame: &mut Frame, app: &App) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Min(1),
-            Constraint::Length(3),
+            Constraint::Length(1),
             Constraint::Length(1),
         ])
         .split(frame.area());
@@ -333,9 +333,10 @@ fn split_lines(text: &str) -> Vec<String> {
 }
 
 fn render_messages(frame: &mut Frame, app: &App, area: Rect) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::DarkGray));
+    let user_color = Color::Blue;
+    let asst_color = Color::Green;
+    let sys_color = Color::DarkGray;
+    let err_color = Color::Red;
 
     let lines: Vec<Line> = app
         .messages
@@ -343,113 +344,83 @@ fn render_messages(frame: &mut Frame, app: &App, area: Rect) {
         .flat_map(|entry| match entry {
             ChatEntry::User(text) => split_lines(text)
                 .into_iter()
-                .enumerate()
-                .map(|(i, l)| {
-                    if i == 0 {
-                        Line::from(vec![
-                            Span::styled(
-                                "you  ",
-                                Style::default()
-                                    .fg(Color::Cyan)
-                                    .add_modifier(Modifier::BOLD),
-                            ),
-                            Span::raw(l),
-                        ])
-                    } else {
-                        Line::from(vec![Span::raw("      ".to_string() + &l)])
-                    }
+                .map(|l| {
+                    Line::from(vec![
+                        Span::styled(" ", Style::default().fg(user_color).bg(user_color)),
+                        Span::raw(" ".to_string() + &l),
+                    ])
                 })
                 .collect::<Vec<_>>(),
             ChatEntry::Assistant(text) => split_lines(text)
                 .into_iter()
-                .enumerate()
-                .map(|(i, l)| {
-                    if i == 0 {
-                        Line::from(vec![
-                            Span::styled(
-                                "bimo ",
-                                Style::default()
-                                    .fg(Color::Green)
-                                    .add_modifier(Modifier::BOLD),
-                            ),
-                            Span::raw(l),
-                        ])
-                    } else {
-                        Line::from(vec![Span::raw("      ".to_string() + &l)])
-                    }
+                .map(|l| {
+                    Line::from(vec![
+                        Span::styled(" ", Style::default().fg(asst_color).bg(asst_color)),
+                        Span::raw(" ".to_string() + &l),
+                    ])
                 })
                 .collect::<Vec<_>>(),
             ChatEntry::System(text) => split_lines(text)
                 .into_iter()
-                .enumerate()
-                .map(|(i, l)| {
-                    if i == 0 {
-                        Line::from(vec![Span::styled(
-                            format!("sys  {l}"),
-                            Style::default().fg(Color::DarkGray),
-                        )])
-                    } else {
-                        Line::from(vec![Span::styled(
-                            format!("      {l}"),
-                            Style::default().fg(Color::DarkGray),
-                        )])
-                    }
+                .map(|l| {
+                    Line::from(vec![
+                        Span::styled(" ", Style::default().fg(sys_color).bg(sys_color)),
+                        Span::raw(" ".to_string() + &l),
+                    ])
                 })
                 .collect::<Vec<_>>(),
             ChatEntry::Error(text) => split_lines(text)
                 .into_iter()
-                .enumerate()
-                .map(|(i, l)| {
-                    if i == 0 {
-                        Line::from(vec![Span::styled(
-                            format!("err  {l}"),
-                            Style::default().fg(Color::Red),
-                        )])
-                    } else {
-                        Line::from(vec![Span::styled(
-                            format!("      {l}"),
-                            Style::default().fg(Color::Red),
-                        )])
-                    }
+                .map(|l| {
+                    Line::from(vec![
+                        Span::styled(" ", Style::default().fg(err_color).bg(err_color)),
+                        Span::raw(" ".to_string() + &l),
+                    ])
                 })
                 .collect::<Vec<_>>(),
         })
         .collect();
 
     let total_lines = lines.len().max(1);
-    let visible = area.height.saturating_sub(2) as usize;
+    let visible = area.height as usize;
     let max_scroll = total_lines.saturating_sub(visible);
     let scroll = app.scroll.min(max_scroll);
 
-    let paragraph = Paragraph::new(lines)
-        .block(block)
-        .scroll((scroll as u16, 0));
+    let paragraph = Paragraph::new(lines).scroll((scroll as u16, 0));
 
     frame.render_widget(paragraph, area);
 }
 
 fn render_input(frame: &mut Frame, app: &App, area: Rect) {
-    let border_color = if app.loading {
-        Color::Yellow
-    } else {
-        Color::DarkGray
-    };
-
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(border_color));
-
-    let (display, cursor_style) = if app.loading {
+    let (display, input_style) = if app.loading {
         (
             "waiting for response...",
-            Style::default().fg(Color::DarkGray),
+            Style::default().bg(Color::DarkGray).fg(Color::DarkGray),
         )
     } else {
-        (&app.input[..], Style::default())
+        (
+            &app.input[..],
+            Style::default().bg(Color::DarkGray).fg(Color::White),
+        )
     };
 
-    let text = format!("{display}|");
-    let paragraph = Paragraph::new(text).block(block).style(cursor_style);
+    let text_content = format!(" {display}|");
+    let used_len = 1 + text_content.len(); // accent space + text
+
+    let accent_span = Span::styled(" ", Style::default().fg(Color::White).bg(Color::Blue));
+    let text_span = Span::styled(&text_content, input_style);
+
+    let mut spans = vec![accent_span, text_span];
+    if (used_len as u16) < area.width {
+        let pad_len = area.width as usize - used_len;
+        spans.push(Span::styled(
+            " ".repeat(pad_len),
+            Style::default().bg(Color::DarkGray),
+        ));
+    }
+
+    let line = Line::from(spans);
+    let paragraph = Paragraph::new(line);
     frame.render_widget(paragraph, area);
 }
 
@@ -482,7 +453,7 @@ fn render_statusbar(frame: &mut Frame, app: &App, area: Rect) {
         Span::styled(right, Style::default().fg(Color::DarkGray)),
     ]);
 
-    let paragraph = Paragraph::new(line).style(Style::default().bg(Color::Black).fg(Color::White));
+    let paragraph = Paragraph::new(line);
     frame.render_widget(paragraph, area);
 }
 
@@ -492,7 +463,7 @@ fn render_autocomplete(frame: &mut Frame, app: &App) {
     let popup_height = (app.autocomplete.filtered.len() as u16 + 2).min(12);
     let popup_width = area.width;
     let x = 0;
-    let y = area.height - 4 - popup_height;
+    let y = area.height - 2 - popup_height;
 
     let area = Rect {
         x,
@@ -687,7 +658,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 } else if input == "/exit" || input == "/quit" {
                                     app.quit = true;
                                 } else {
-                                    app.push_message(ChatEntry::System(format!(">>> {input}")));
+                                    app.push_message(ChatEntry::User(input.clone()));
                                     app.loading = true;
                                     spawn_command_task(app.base_url.clone(), input, tx.clone());
                                 }
@@ -737,7 +708,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 app.quit = true;
                                 continue;
                             }
-                            app.push_message(ChatEntry::System(format!(">>> {input}")));
+                            app.push_message(ChatEntry::User(input.clone()));
                             app.loading = true;
                             spawn_command_task(app.base_url.clone(), input, tx.clone());
                         } else {
