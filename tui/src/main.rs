@@ -671,10 +671,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             app.autocomplete.next();
                         }
                         KeyCode::Enter => {
-                            if let Some(cmd) = app.autocomplete.selected_command() {
-                                app.input = format!("/{} ", cmd.name);
-                            }
+                            let cmd_name = app
+                                .autocomplete
+                                .selected_command()
+                                .map(|c| format!("/{}", c.name));
                             app.autocomplete.hide();
+                            if let Some(input) = cmd_name {
+                                app.input.clear();
+                                app.status_msg = None;
+
+                                if input == "/clear" {
+                                    app.messages.clear();
+                                    app.scroll = 0;
+                                    app.status_msg = Some("session cleared".into());
+                                } else if input == "/exit" || input == "/quit" {
+                                    app.quit = true;
+                                } else {
+                                    app.push_message(ChatEntry::System(format!(">>> {input}")));
+                                    app.loading = true;
+                                    spawn_command_task(app.base_url.clone(), input, tx.clone());
+                                }
+                            }
                         }
                         KeyCode::Char(c) => {
                             app.input.push(c);
@@ -801,7 +818,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     app.model = status.model;
                 }
                 AppEvent::CommandsLoaded(cmds) => {
-                    app.autocomplete.items = cmds;
+                    let mut items = cmds;
+                    items.push(CommandInfo {
+                        name: "exit".into(),
+                        description: "quit the TUI".into(),
+                        subcommands: vec![],
+                    });
+                    items.push(CommandInfo {
+                        name: "quit".into(),
+                        description: "alias for /exit".into(),
+                        subcommands: vec![],
+                    });
+                    items.sort_by(|a, b| a.name.cmp(&b.name));
+                    app.autocomplete.items = items;
                 }
             }
         }
