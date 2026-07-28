@@ -1,6 +1,7 @@
 use crate::agent::Agent;
 use crate::config::CustomProviderConfig;
 use crate::session::Role;
+use crate::session::manager::SessionManager;
 
 use super::dto::*;
 
@@ -13,6 +14,7 @@ use tracing;
 /// The top-level API object. Wrap this in any transport (HTTP, gRPC, stdin, etc.).
 pub struct BimoApi {
     pub agent: Agent,
+    pub(crate) session_manager: SessionManager,
 }
 
 impl Default for BimoApi {
@@ -24,14 +26,231 @@ impl Default for BimoApi {
 impl BimoApi {
     pub fn new() -> Self {
         tracing::info!("initializing BimoApi");
+        let agent = Agent::new();
+        let session_manager = SessionManager::new(agent.session.clone());
         Self {
-            agent: Agent::new(),
+            agent,
+            session_manager,
         }
     }
 
     /// Convenience constructor from an existing agent (useful for testing).
     pub fn from_agent(agent: Agent) -> Self {
-        Self { agent }
+        let session_manager = SessionManager::new(agent.session.clone());
+        Self {
+            agent,
+            session_manager,
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Session management
+    // -----------------------------------------------------------------------
+
+    /// Create a new session and set it as active.
+    /// Persists the new session to disk immediately.
+    pub fn create_session(&mut self) -> ApiResponse {
+        tracing::info!("create_session called");
+
+        // Save the current active session back to the pool first
+        self.sync_active_to_pool();
+
+        // Create new session with system prompt
+        let mut new_session = crate::session::Session::new();
+        let tool_xml = self.agent.tool_registry.render_tool_xml();
+        let now = chrono::Local::now().format("%Y-%m-%d").to_string();
+        let cwd = std::env::current_dir()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|_| "<unknown>".into());
+        let system_prompt = crate::prompts::render(
+            &crate::prompts::load(crate::prompts::SYSTEM),
+            &[
+                ("TOOLS", &tool_xml),
+                ("DATE", &now),
+                ("CWD", &cwd),
+                (
+                    "PROJECT_CONTEXT",
+                    &crate::agent::build_project_context(&cwd),
+                ),
+            ],
+        );
+        new_session.add_system_message(&system_prompt);
+
+        let id = new_session.id.clone();
+
+        // Persist to disk
+        if let Err(e) = new_session.save() {
+            tracing::error!(error = %e, "failed to persist new session");
+        }
+
+        // Insert into pool and set as active
+        self.session_manager.insert(new_session);
+        let _ = self.session_manager.set_active(&id);
+
+        // Load into agent
+        if let Some(session) = self.session_manager.active() {
+            self.agent.session = session.clone();
+        }
+
+        tracing::info!(session_id = %id, "create_session done");
+        ApiResponse::ok(CreateSessionData { session_id: id })
+    }
+
+    /// List all sessions in the pool.
+    pub fn list_sessions(&self) -> ApiResponse {
+        tracing::debug!("list_sessions called");
+        let sessions = self.session_manager.list();
+        let active_id = self.session_manager.active_id().to_string();
+        tracing::debug!(count = sessions.len(), "list_sessions done");
+        ApiResponse::ok(SessionListData {
+            sessions,
+            active_session_id: active_id,
+        })
+    }
+
+    /// Switch to a different session by id.
+    pub fn switch_session(&mut self, req: SwitchSessionRequest) -> ApiResponse {
+        tracing::info!(session_id = %req.session_id, "switch_session called");
+
+        // Save current active session back to pool
+        self.sync_active_to_pool();
+
+        // Find the session — first try the pool, then try loading from disk
+        let target_id = req.session_id.clone();
+        let found_in_pool = self.session_manager.get(&target_id).is_some();
+
+        if !found_in_pool {
+            // Try loading from disk
+            match crate::session::Session::load(&target_id) {
+                Ok(loaded) => {
+                    self.session_manager.insert(loaded);
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, session_id = %target_id, "session not found");
+                    return ApiResponse::err(crate::error::BimoError::Session(format!(
+                        "session '{}' not found",
+                        target_id
+                    )));
+                }
+            }
+        }
+
+        // Switch active id
+        if let Err(e) = self.session_manager.set_active(&target_id) {
+            return ApiResponse::err(e);
+        }
+
+        // Load the target session into the agent
+        if let Some(session) = self.session_manager.active() {
+            self.agent.session = session.clone();
+        }
+
+        let message_count = self.agent.session.message_count();
+        tracing::info!(
+            session_id = %target_id,
+            message_count,
+            "switch_session done"
+        );
+        ApiResponse::ok(SessionData {
+            session_id: target_id,
+            messages: self.agent.session.messages.clone(),
+            message_count,
+        })
+    }
+
+    /// Delete a session from the pool (and from disk).
+    /// Cannot delete the active session.
+    pub fn delete_session_from_pool(&mut self, session_id: &str) -> ApiResponse {
+        tracing::info!(session_id, "delete_session_from_pool called");
+
+        // Remove from disk first
+        if let Err(e) = crate::session::Session::delete_saved(session_id) {
+            tracing::warn!(error = %e, "failed to delete from disk (may not exist)");
+        }
+
+        // Remove from pool
+        match self.session_manager.remove(session_id) {
+            Ok(_) => {
+                tracing::info!(session_id, "session deleted from pool");
+                ApiResponse::ok(serde_json::Value::Null)
+            }
+            Err(e) => ApiResponse::err(e),
+        }
+    }
+
+    /// Get a specific session by id (from pool or disk).
+    pub fn get_session_by_id(&self, session_id: &str) -> ApiResponse {
+        tracing::debug!(session_id, "get_session_by_id called");
+
+        // Check the pool first
+        if let Some(session) = self.session_manager.get(session_id) {
+            let data = SessionData {
+                session_id: session.id.clone(),
+                messages: session.messages.clone(),
+                message_count: session.message_count(),
+            };
+            return ApiResponse::ok(data);
+        }
+
+        // Try loading from disk
+        match crate::session::Session::load(session_id) {
+            Ok(session) => {
+                let data = SessionData {
+                    session_id: session.id.clone(),
+                    messages: session.messages.clone(),
+                    message_count: session.message_count(),
+                };
+                ApiResponse::ok(data)
+            }
+            Err(e) => ApiResponse::err(e),
+        }
+    }
+
+    /// Save the current agent session back to the pool.
+    pub fn sync_active_to_pool(&mut self) {
+        let id = self.agent.session.id.clone();
+        self.session_manager.insert(self.agent.session.clone());
+        let _ = self.session_manager.set_active(&id);
+    }
+
+    /// Switch to a session by id, loading from pool or disk.
+    /// Returns Ok(()) on success, or an error if the session is not found.
+    pub fn activate_session(&mut self, sid: &str) -> crate::error::Result<()> {
+        if sid != self.agent.session.id {
+            self.sync_active_to_pool();
+            if self.session_manager.get(sid).is_none() {
+                match crate::session::Session::load(sid) {
+                    Ok(loaded) => {
+                        self.session_manager.insert(loaded);
+                    }
+                    Err(e) => {
+                        return Err(crate::error::BimoError::Session(format!(
+                            "session '{sid}' not found: {e}"
+                        )));
+                    }
+                }
+            }
+            self.session_manager.set_active(sid)?;
+            if let Some(session) = self.session_manager.active() {
+                self.agent.session = session.clone();
+            }
+        }
+        Ok(())
+    }
+
+    /// Persist the active session to disk.
+    pub fn persist_active_session(&self) {
+        if let Err(e) = self.session_manager.save_active() {
+            tracing::error!(error = %e, "failed to persist session");
+        }
+    }
+
+    /// List all active sessions.
+    pub fn list_sessions_data(&self) -> SessionListData {
+        SessionListData {
+            sessions: self.session_manager.list(),
+            active_session_id: self.session_manager.active_id().to_string(),
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -178,6 +397,11 @@ impl BimoApi {
     pub fn clear_session(&mut self) -> ApiResponse {
         tracing::info!("clear_session called");
         self.agent.clear_session();
+        // Sync the cleared session back to the pool
+        self.sync_active_to_pool();
+        if let Err(e) = self.session_manager.save_active() {
+            tracing::error!(error = %e, "failed to persist cleared session");
+        }
         tracing::info!("clear_session done");
         ApiResponse::ok(serde_json::Value::Null)
     }
@@ -194,9 +418,42 @@ impl BimoApi {
         };
 
         tracing::info!(command = %input, "execute_command called");
-        match self.agent.execute_command(&input).await {
+        let active_id = self.session_manager.active_id().to_string();
+        let all_sessions = self.session_manager.list();
+
+        match self
+            .agent
+            .execute_command(&input, &active_id, &all_sessions)
+            .await
+        {
             Ok(result) => {
+                // Check if the command requested a session switch
+                // (We need to re-dispatch to get the context, but we can check the result data)
+                // Actually, the switch_session_id is in the context which was consumed.
+                // We need to extract it differently. Let's handle it via the result data.
+                // For now, the switch is handled by the command setting data with session_id.
                 tracing::info!(command = %result.command, output_len = result.output.len(), "execute_command success");
+
+                // Handle session switch: check if this was a switch command
+                if result.command == "session"
+                    && result.output.starts_with("Switching to session")
+                    && let Some(data) = &result.data
+                    && let Some(sid) = data.get("session_id").and_then(|v| v.as_str())
+                {
+                    // Perform the actual switch
+                    self.sync_active_to_pool();
+                    if self.session_manager.get(sid).is_none()
+                        && let Ok(loaded) = crate::session::Session::load(sid)
+                    {
+                        self.session_manager.insert(loaded);
+                    }
+                    if let Err(e) = self.session_manager.set_active(sid) {
+                        return ApiResponse::err(e);
+                    }
+                    if let Some(session) = self.session_manager.active() {
+                        self.agent.session = session.clone();
+                    }
+                }
                 ApiResponse::ok(result)
             }
             Err(e) => {
@@ -216,6 +473,8 @@ impl BimoApi {
             provider: self.agent.config.selected_provider.clone(),
             model: self.agent.config.selected_model.clone(),
             session_id: self.agent.session.id.clone(),
+            active_session_id: self.session_manager.active_id().to_string(),
+            session_count: self.session_manager.list().len(),
             message_count: self.agent.session.message_count(),
             needs_configuration: self.agent.needs_configuration(),
         };
@@ -387,8 +646,11 @@ mod tests {
         assert!(resp.success);
         let data = resp.data.unwrap();
         assert!(data.get("session_id").is_some());
+        assert!(data.get("active_session_id").is_some());
+        assert!(data.get("session_count").is_some());
         assert!(data.get("message_count").is_some());
         assert_eq!(data["message_count"], 1);
+        assert_eq!(data["session_count"], 1);
     }
 
     #[test]
@@ -572,5 +834,130 @@ mod tests {
         assert_eq!(estimate_max_context(&Some("llama3".into())), 128_000);
         assert_eq!(estimate_max_context(&Some("mystery-model".into())), 128_000);
         assert_eq!(estimate_max_context(&None), 128_000);
+    }
+
+    #[test]
+    fn create_session_creates_new_active_session() {
+        let mut api = BimoApi::new();
+        let original_id = api.agent.session.id.clone();
+
+        let resp = api.create_session();
+        assert!(resp.success);
+        let data = resp.data.unwrap();
+        let new_id = data["session_id"].as_str().unwrap().to_string();
+        assert_ne!(new_id, original_id);
+        assert_eq!(api.agent.session.id, new_id);
+        assert_eq!(api.session_manager.active_id(), &new_id);
+    }
+
+    #[test]
+    fn list_sessions_returns_all() {
+        let mut api = BimoApi::new();
+        let resp = api.list_sessions();
+        assert!(resp.success);
+        let data = resp.data.unwrap();
+        let sessions = data["sessions"].as_array().unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert!(data.get("active_session_id").is_some());
+    }
+
+    #[test]
+    fn switch_session_changes_active() {
+        let mut api = BimoApi::new();
+        let id1 = api.agent.session.id.clone();
+
+        // Create a second session
+        let resp = api.create_session();
+        let id2 = resp
+            .data
+            .unwrap()
+            .get("session_id")
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        // Switch back to first
+        let resp = api.switch_session(SwitchSessionRequest {
+            session_id: id1.clone(),
+        });
+        assert!(resp.success);
+        assert_eq!(api.session_manager.active_id(), &id1);
+        assert_eq!(api.agent.session.id, id1);
+
+        // Switch to second again
+        let resp = api.switch_session(SwitchSessionRequest {
+            session_id: id2.clone(),
+        });
+        assert!(resp.success);
+        assert_eq!(api.session_manager.active_id(), &id2);
+
+        // cleanup
+        let _ = crate::session::Session::delete_saved(&id1);
+        let _ = crate::session::Session::delete_saved(&id2);
+    }
+
+    #[test]
+    fn switch_session_unknown_id_errors() {
+        let mut api = BimoApi::new();
+        let resp = api.switch_session(SwitchSessionRequest {
+            session_id: "nonexistent".into(),
+        });
+        assert!(!resp.success);
+    }
+
+    #[test]
+    fn get_session_by_id_returns_session() {
+        let mut api = BimoApi::new();
+        let id = api.agent.session.id.clone();
+        let resp = api.get_session_by_id(&id);
+        assert!(resp.success);
+        let data = resp.data.unwrap();
+        assert_eq!(data["session_id"].as_str().unwrap(), &id);
+    }
+
+    #[test]
+    fn delete_session_from_pool_removes_session() {
+        let mut api = BimoApi::new();
+        let id1 = api.agent.session.id.clone();
+
+        // Create second session
+        let resp = api.create_session();
+        let id2 = resp
+            .data
+            .unwrap()
+            .get("session_id")
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        // Switch back to first session so we can delete the second
+        let resp = api.switch_session(SwitchSessionRequest {
+            session_id: id1.clone(),
+        });
+        assert!(resp.success);
+
+        // Delete the second session
+        let resp = api.delete_session_from_pool(&id2);
+        assert!(resp.success);
+
+        // List should only have one
+        let resp = api.list_sessions();
+        let data = resp.data.unwrap();
+        let sessions = data["sessions"].as_array().unwrap();
+        assert_eq!(sessions.len(), 1);
+
+        // cleanup
+        let _ = crate::session::Session::delete_saved(&id1);
+        let _ = crate::session::Session::delete_saved(&id2);
+    }
+
+    #[test]
+    fn delete_active_session_errors() {
+        let mut api = BimoApi::new();
+        let id = api.agent.session.id.clone();
+        let resp = api.delete_session_from_pool(&id);
+        assert!(!resp.success);
     }
 }

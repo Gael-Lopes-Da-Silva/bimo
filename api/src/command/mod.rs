@@ -106,6 +106,10 @@ pub struct CommandContext {
     pub tree_fork_index: Option<usize>,
     pub tree_revert_index: Option<usize>,
     pub thinking: ThinkingConfig,
+    // Multi-session support
+    pub active_session_id: String,
+    pub all_sessions: Vec<SessionInfo>,
+    pub switch_session_id: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -327,6 +331,9 @@ mod tests {
             tree_fork_index: None,
             tree_revert_index: None,
             thinking: ThinkingConfig::default(),
+            active_session_id: "test-session-id".into(),
+            all_sessions: vec![],
+            switch_session_id: None,
         }
     }
 
@@ -489,9 +496,11 @@ mod tests {
     fn session_command_list() {
         let reg = CommandRegistry::new();
         let mut ctx = make_context();
+        ctx.all_sessions = vec![];
+        ctx.saved_sessions = vec![];
         let result = reg.dispatch("/session list", &mut ctx).unwrap();
         assert_eq!(result.command, "session");
-        assert!(result.output.contains("No saved sessions"));
+        assert!(result.output.contains("No active sessions"));
     }
 
     #[test]

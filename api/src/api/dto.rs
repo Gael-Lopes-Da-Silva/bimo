@@ -42,6 +42,9 @@ impl ApiResponse {
 #[derive(Debug, Deserialize)]
 pub struct ChatRequest {
     pub message: String,
+    /// Optional session id to target. If omitted, uses the active session.
+    #[serde(default)]
+    pub session_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -103,6 +106,8 @@ pub struct StatusData {
     pub provider: Option<String>,
     pub model: Option<String>,
     pub session_id: String,
+    pub active_session_id: String,
+    pub session_count: usize,
     pub message_count: usize,
     pub needs_configuration: bool,
 }
@@ -156,6 +161,26 @@ pub struct ThinkingData {
     pub budget_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
+// Session management
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+pub struct SwitchSessionRequest {
+    pub session_id: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CreateSessionData {
+    pub session_id: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SessionListData {
+    pub sessions: Vec<crate::session::SessionInfo>,
+    pub active_session_id: String,
 }
 
 // ---------------------------------------------------------------------------

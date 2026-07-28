@@ -1,6 +1,6 @@
 use axum::{
     Router,
-    extract::{Json, State},
+    extract::{Json, Path, State},
     http::StatusCode,
     response::Response,
     routing::{get, post},
@@ -42,13 +42,19 @@ async fn main() {
         .route("/api/model/select", post(select_model))
         .route("/api/chat", post(chat))
         .route("/api/chat/stream", post(chat_stream))
-        .route("/api/session", get(get_session))
+        .route("/api/session", get(get_session).post(create_session))
+        .route("/api/session/list", get(list_sessions))
         .route("/api/session/clear", post(clear_session))
+        .route("/api/session/switch", post(switch_session))
+        .route("/api/session/context", get(get_context))
+        .route(
+            "/api/session/:session_id",
+            get(get_session_by_id).delete(delete_session),
+        )
         .route("/api/command", post(execute_command))
         .route("/api/commands", get(list_commands))
         .route("/api/status", get(status))
         .route("/api/help", get(help))
-        .route("/api/session/context", get(get_context))
         .route("/api/thinking", get(get_thinking))
         .layer(TraceLayer::new_for_http())
         .layer(cors)
@@ -146,9 +152,27 @@ async fn chat(
     State(state): State<AppState>,
     Json(req): Json<ChatRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
-    tracing::info!(message_len = req.message.len(), "POST /api/chat");
+    tracing::info!(message_len = req.message.len(), session_id = ?req.session_id, "POST /api/chat");
     let mut api = state.lock().await;
-    let resp = api.chat(req).await;
+
+    // Switch to the target session if specified
+    if let Some(sid) = &req.session_id
+        && let Err(e) = api.activate_session(sid)
+    {
+        return api_response_to_http(ApiResponse::err(e));
+    }
+
+    let resp = api
+        .chat(ChatRequest {
+            message: req.message,
+            session_id: None, // already handled above
+        })
+        .await;
+
+    // Persist after chat completes
+    api.sync_active_to_pool();
+    api.persist_active_session();
+
     tracing::info!(success = resp.success, "POST /api/chat -> done");
     api_response_to_http(resp)
 }
@@ -160,7 +184,7 @@ async fn chat_stream(State(state): State<AppState>, Json(req): Json<ChatRequest>
         tokio::sync::mpsc::channel::<Result<ChatStreamEvent, bimo_api::BimoError>>(64);
 
     tokio::spawn(async move {
-        let result = run_chat_stream(state, &req.message, &tx).await;
+        let result = run_chat_stream(state, &req.message, req.session_id.as_deref(), &tx).await;
         if let Err(e) = result {
             let _ = tx
                 .send(Ok(ChatStreamEvent::Error {
@@ -199,6 +223,7 @@ async fn chat_stream(State(state): State<AppState>, Json(req): Json<ChatRequest>
 async fn run_chat_stream(
     state: AppState,
     user_message: &str,
+    session_id: Option<&str>,
     tx: &tokio::sync::mpsc::Sender<Result<ChatStreamEvent, bimo_api::BimoError>>,
 ) -> bimo_api::Result<()> {
     const MAX_TOOL_ITERATIONS: usize = 20;
@@ -208,6 +233,14 @@ async fn run_chat_stream(
     for iteration in 0..=MAX_TOOL_ITERATIONS {
         {
             let mut api = state.lock().await;
+
+            // Switch to the target session if specified
+            if let Some(sid) = session_id
+                && let Err(e) = api.activate_session(sid)
+            {
+                let _ = tx.try_send(Err(e));
+                return Ok(());
+            }
             let runtime = api
                 .agent
                 .runtime
@@ -259,6 +292,9 @@ async fn run_chat_stream(
             if tool_calls.is_empty() || iteration == MAX_TOOL_ITERATIONS {
                 let sid = api.agent.session.id.clone();
                 api.agent.session.add_assistant_message(&content);
+                // Persist the session to the pool and disk
+                api.sync_active_to_pool();
+                api.persist_active_session();
                 let _ = tx.try_send(Ok(ChatStreamEvent::Done {
                     model: Some(model_id),
                     usage: None,
@@ -297,6 +333,58 @@ async fn get_session(State(state): State<AppState>) -> Json<ApiResponse> {
     let resp = api.get_session();
     tracing::debug!(success = resp.success, "GET /api/session -> ok");
     Json(resp)
+}
+
+async fn create_session(State(state): State<AppState>) -> Json<ApiResponse> {
+    tracing::info!("POST /api/session");
+    let mut api = state.lock().await;
+    let resp = api.create_session();
+    tracing::info!(success = resp.success, "POST /api/session -> done");
+    Json(resp)
+}
+
+async fn list_sessions(State(state): State<AppState>) -> Json<ApiResponse> {
+    tracing::debug!("GET /api/session/list");
+    let api = state.lock().await;
+    let resp = api.list_sessions();
+    tracing::debug!(success = resp.success, "GET /api/session/list -> ok");
+    Json(resp)
+}
+
+async fn switch_session(
+    State(state): State<AppState>,
+    Json(req): Json<SwitchSessionRequest>,
+) -> (StatusCode, Json<ApiResponse>) {
+    tracing::info!(session_id = %req.session_id, "POST /api/session/switch");
+    let mut api = state.lock().await;
+    let resp = api.switch_session(req);
+    tracing::info!(success = resp.success, "POST /api/session/switch -> done");
+    api_response_to_http(resp)
+}
+
+async fn get_session_by_id(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+) -> Json<ApiResponse> {
+    tracing::debug!(session_id = %session_id, "GET /api/session/:session_id");
+    let api = state.lock().await;
+    let resp = api.get_session_by_id(&session_id);
+    tracing::debug!(success = resp.success, "GET /api/session/:session_id -> ok");
+    Json(resp)
+}
+
+async fn delete_session(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+) -> (StatusCode, Json<ApiResponse>) {
+    tracing::info!(session_id = %session_id, "DELETE /api/session/:session_id");
+    let mut api = state.lock().await;
+    let resp = api.delete_session_from_pool(&session_id);
+    tracing::info!(
+        success = resp.success,
+        "DELETE /api/session/:session_id -> done"
+    );
+    api_response_to_http(resp)
 }
 
 async fn clear_session(State(state): State<AppState>) -> Json<ApiResponse> {

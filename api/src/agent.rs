@@ -346,9 +346,16 @@ impl Agent {
     // Commands
     // -----------------------------------------------------------------------
 
-    pub async fn execute_command(&mut self, input: &str) -> Result<CommandResult> {
+    pub async fn execute_command(
+        &mut self,
+        input: &str,
+        active_session_id: &str,
+        all_sessions: &[crate::session::SessionInfo],
+    ) -> Result<CommandResult> {
         tracing::info!(input, "execute_command called");
         let mut ctx = self.build_command_context();
+        ctx.active_session_id = active_session_id.to_string();
+        ctx.all_sessions = all_sessions.to_vec();
         let result = self
             .command_registry
             .dispatch_async(input, &mut ctx)
@@ -587,6 +594,9 @@ impl Agent {
             tree_fork_index: None,
             tree_revert_index: None,
             thinking: self.config.thinking.clone(),
+            active_session_id: self.session.id.clone(),
+            all_sessions: vec![],
+            switch_session_id: None,
         }
     }
 
@@ -599,7 +609,7 @@ impl Agent {
 
 /// Build a short project context string for the system prompt.
 /// Includes git branch (if available) and top-level directory listing.
-fn build_project_context(cwd: &str) -> String {
+pub(crate) fn build_project_context(cwd: &str) -> String {
     let mut parts: Vec<String> = Vec::new();
 
     // Git branch

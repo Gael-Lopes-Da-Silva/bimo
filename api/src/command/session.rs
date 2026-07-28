@@ -33,6 +33,11 @@ impl SlashCommand for SessionCommand {
                     usage: "/session resume <session-id>".into(),
                 },
                 SubcommandInfo {
+                    name: "switch".into(),
+                    description: "switch to an active session by id (supports prefix)".into(),
+                    usage: "/session switch <session-id>".into(),
+                },
+                SubcommandInfo {
                     name: "delete".into(),
                     description: "delete a saved session".into(),
                     usage: "/session delete <session-id>".into(),
@@ -56,18 +61,18 @@ impl SlashCommand for SessionCommand {
         let parts: Vec<&str> = args.split_whitespace().collect();
         match parts.first().copied() {
             Some("list") | None => {
-                if ctx.saved_sessions.is_empty() {
+                if ctx.all_sessions.is_empty() {
                     return Ok(CommandResult {
                         command: "session".into(),
-                        output: "No saved sessions.".into(),
+                        output: "No active sessions.".into(),
                         data: Some(serde_json::json!([])),
                     });
                 }
                 let lines: Vec<String> = ctx
-                    .saved_sessions
+                    .all_sessions
                     .iter()
                     .map(|s| {
-                        let active = if s.id == ctx.session_id {
+                        let active = if s.id == ctx.active_session_id {
                             " (active)"
                         } else {
                             ""
@@ -81,15 +86,45 @@ impl SlashCommand for SessionCommand {
                     })
                     .collect();
                 let output = format!(
-                    "Saved sessions ({}):\n{}",
+                    "Active sessions ({}):\n{}\n\nSaved sessions ({}):\n{}",
+                    ctx.all_sessions.len(),
+                    lines.join("\n"),
                     ctx.saved_sessions.len(),
-                    lines.join("\n")
+                    if ctx.saved_sessions.is_empty() {
+                        "  (none)".to_string()
+                    } else {
+                        ctx.saved_sessions
+                            .iter()
+                            .map(|s| {
+                                let active = if s.id == ctx.active_session_id {
+                                    " (active)"
+                                } else {
+                                    ""
+                                };
+                                format!(
+                                    "  {} — {} messages, updated {}{active}",
+                                    &s.id[..8.min(s.id.len())],
+                                    s.message_count,
+                                    s.updated_at.format("%Y-%m-%d %H:%M UTC"),
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    },
                 );
-                let data = serde_json::to_value(&ctx.saved_sessions).ok();
+                let mut data = serde_json::json!({
+                    "active_sessions": ctx.all_sessions,
+                });
+                if let Some(obj) = data.as_object_mut() {
+                    obj.insert(
+                        "saved_sessions".into(),
+                        serde_json::to_value(&ctx.saved_sessions).unwrap_or_default(),
+                    );
+                }
                 Ok(CommandResult {
                     command: "session".into(),
                     output,
-                    data,
+                    data: Some(data),
                 })
             }
             Some("save") => Ok(CommandResult {
@@ -115,6 +150,34 @@ impl SlashCommand for SessionCommand {
                         ),
                         data: Some(serde_json::json!({ "session_id": info.id })),
                     }),
+                    None => Err(BimoError::Command(format!(
+                        "session '{id}' not found. Use /session list."
+                    ))),
+                }
+            }
+            Some("switch") => {
+                let id = parts.get(1).ok_or_else(|| {
+                    BimoError::Command("usage: /session switch <session-id>".into())
+                })?;
+                // Check active sessions first, then saved sessions
+                let found = ctx
+                    .all_sessions
+                    .iter()
+                    .chain(ctx.saved_sessions.iter())
+                    .find(|s| s.id == *id || s.id.starts_with(id));
+                match found {
+                    Some(info) => {
+                        ctx.switch_session_id = Some(info.id.clone());
+                        Ok(CommandResult {
+                            command: "session".into(),
+                            output: format!(
+                                "Switching to session {} ({} messages).",
+                                &info.id[..8.min(info.id.len())],
+                                info.message_count,
+                            ),
+                            data: Some(serde_json::json!({ "session_id": info.id })),
+                        })
+                    }
                     None => Err(BimoError::Command(format!(
                         "session '{id}' not found. Use /session list."
                     ))),
@@ -163,7 +226,7 @@ impl SlashCommand for SessionCommand {
                 data: None,
             }),
             Some(other) => Err(BimoError::Command(format!(
-                "unknown subcommand '{other}'. Usage: /session [list|save|resume|delete|info|purge]"
+                "unknown subcommand '{other}'. Usage: /session [list|save|resume|switch|delete|info|purge]"
             ))),
         }
     }
