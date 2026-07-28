@@ -1,0 +1,7 @@
+[package]
+name = "bimo_tui"
+version = "0.1.0"
+edition = "2024"
+description = "Bimo — a general-purpose coding agent"
+
+[dependencies]
