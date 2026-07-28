@@ -35,6 +35,14 @@ pub fn builtin_providers() -> Vec<ProviderInfo> {
             builtin: true,
         },
         ProviderInfo {
+            id: "lmstudio".into(),
+            name: "LM Studio".into(),
+            category: ProviderCategory::Local,
+            requires_api_key: false,
+            default_base_url: "http://localhost:1234/v1".into(),
+            builtin: true,
+        },
+        ProviderInfo {
             id: "openrouter".into(),
             name: "OpenRouter".into(),
             category: ProviderCategory::Cloud,
@@ -143,13 +151,6 @@ impl ProviderRegistry {
 
         let (chat_endpoint, models_endpoint, auth_header, auth_prefix, format) =
             match info.id.as_str() {
-                "openai" => (
-                    "/chat/completions".into(),
-                    Some("/models".into()),
-                    Some("Authorization".into()),
-                    Some("Bearer ".into()),
-                    RequestBodyFormat::OpenAi,
-                ),
                 "anthropic" => (
                     "/v1/messages".into(),
                     None,
@@ -164,14 +165,13 @@ impl ProviderRegistry {
                     None,
                     RequestBodyFormat::Ollama,
                 ),
-                "openrouter" | "opencode-go" | "opencode-zen" => (
+                _ => (
                     "/chat/completions".into(),
                     Some("/models".into()),
                     Some("Authorization".into()),
                     Some("Bearer ".into()),
                     RequestBodyFormat::OpenAi,
                 ),
-                _ => return Err(BimoError::Provider("unsupported builtin".into())),
             };
 
         let api_key = api_key.or_else(|| match info.id.as_str() {
@@ -227,7 +227,7 @@ mod tests {
     #[test]
     fn builtin_providers_count() {
         let providers = builtin_providers();
-        assert_eq!(providers.len(), 6);
+        assert_eq!(providers.len(), 7);
     }
 
     #[test]
@@ -240,6 +240,7 @@ mod tests {
         assert!(ids.contains(&"openrouter"));
         assert!(ids.contains(&"opencode-go"));
         assert!(ids.contains(&"opencode-zen"));
+        assert!(ids.contains(&"lmstudio"));
     }
 
     #[test]
@@ -298,6 +299,16 @@ mod tests {
     }
 
     #[test]
+    fn lmstudio_provider_metadata() {
+        let providers = builtin_providers();
+        let lmstudio = providers.iter().find(|p| p.id == "lmstudio").unwrap();
+        assert_eq!(lmstudio.category, ProviderCategory::Local);
+        assert!(!lmstudio.requires_api_key);
+        assert!(lmstudio.builtin);
+        assert_eq!(lmstudio.default_base_url, "http://localhost:1234/v1");
+    }
+
+    #[test]
     fn registry_list_includes_custom() {
         let reg = ProviderRegistry::new();
         let mut config = AppConfig::default();
@@ -314,7 +325,7 @@ mod tests {
         });
 
         let all = reg.list_all(&config);
-        assert_eq!(all.len(), 7);
+        assert_eq!(all.len(), 8);
         assert!(all.iter().any(|p| p.id == "custom-1" && !p.builtin));
     }
 
