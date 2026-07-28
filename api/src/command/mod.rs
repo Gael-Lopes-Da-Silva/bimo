@@ -6,6 +6,7 @@ pub mod provider;
 pub mod session;
 pub mod status;
 pub mod thinking;
+pub mod todo;
 pub mod tools;
 pub mod tree;
 
@@ -13,6 +14,7 @@ use crate::config::ThinkingConfig;
 use crate::error::{BimoError, Result};
 use crate::model::ModelInfo;
 use crate::session::SessionInfo;
+use crate::todo::TodoList;
 use crate::tool::Tool;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -106,6 +108,7 @@ pub struct CommandContext {
     pub tree_fork_index: Option<usize>,
     pub tree_revert_index: Option<usize>,
     pub thinking: ThinkingConfig,
+    pub todos: TodoList,
     // Multi-session support
     pub active_session_id: String,
     pub all_sessions: Vec<SessionInfo>,
@@ -142,6 +145,7 @@ impl CommandRegistry {
         reg.register(Box::new(session::SessionCommand));
         reg.register(Box::new(tree::TreeCommand));
         reg.register(Box::new(thinking::ThinkingCommand));
+        reg.register(Box::new(todo::TodoCommand));
         reg.register_async(Box::new(compact::CompactCommand));
         reg
     }
@@ -295,6 +299,7 @@ pub(crate) fn truncate(s: &str, max_len: usize) -> String {
 mod tests {
     use super::*;
     use crate::model::ModelInfo;
+    use crate::todo::TodoList;
     use crate::tool::{Tool, ToolParameter};
 
     fn make_context() -> CommandContext {
@@ -333,6 +338,7 @@ mod tests {
             tree_fork_index: None,
             tree_revert_index: None,
             thinking: ThinkingConfig::default(),
+            todos: TodoList::new(),
             active_session_id: "test-session-id".into(),
             all_sessions: vec![],
             switch_session_id: None,
@@ -352,6 +358,7 @@ mod tests {
         assert!(names.contains(&"session"));
         assert!(names.contains(&"tree"));
         assert!(names.contains(&"compact"));
+        assert!(names.contains(&"todo"));
     }
 
     #[test]
@@ -684,6 +691,103 @@ mod tests {
         let reg = CommandRegistry::new();
         let mut ctx = make_context();
         let result = reg.dispatch("/thinking foobar", &mut ctx);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn todo_command_list_empty() {
+        let reg = CommandRegistry::new();
+        let mut ctx = make_context();
+        let result = reg.dispatch("/todo", &mut ctx).unwrap();
+        assert_eq!(result.command, "todo");
+        assert!(result.output.contains("No todos"));
+    }
+
+    #[test]
+    fn todo_command_clear() {
+        let reg = CommandRegistry::new();
+        let mut ctx = make_context();
+        ctx.todos.add("Task 1");
+        ctx.todos.add("Task 2");
+        let result = reg.dispatch("/todo clear", &mut ctx).unwrap();
+        assert!(result.output.contains("Cleared 2"));
+        assert!(ctx.todos.is_empty());
+    }
+
+    #[test]
+    fn todo_command_done() {
+        let reg = CommandRegistry::new();
+        let mut ctx = make_context();
+        ctx.todos.add("Task 1");
+        let result = reg.dispatch("/todo done 1", &mut ctx).unwrap();
+        assert!(result.output.contains("done"));
+        assert_eq!(
+            ctx.todos.get(1).unwrap().status,
+            crate::todo::TodoStatus::Done
+        );
+    }
+
+    #[test]
+    fn todo_command_done_not_found() {
+        let reg = CommandRegistry::new();
+        let mut ctx = make_context();
+        let result = reg.dispatch("/todo done 99", &mut ctx);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn todo_command_progress() {
+        let reg = CommandRegistry::new();
+        let mut ctx = make_context();
+        ctx.todos.add("Task 1");
+        let result = reg.dispatch("/todo progress 1", &mut ctx).unwrap();
+        assert!(result.output.contains("in progress"));
+        assert_eq!(
+            ctx.todos.get(1).unwrap().status,
+            crate::todo::TodoStatus::InProgress
+        );
+    }
+
+    #[test]
+    fn todo_command_pending() {
+        let reg = CommandRegistry::new();
+        let mut ctx = make_context();
+        ctx.todos.add("Task 1");
+        ctx.todos.update_status(1, crate::todo::TodoStatus::Done);
+        let result = reg.dispatch("/todo pending 1", &mut ctx).unwrap();
+        assert!(result.output.contains("pending"));
+        assert_eq!(
+            ctx.todos.get(1).unwrap().status,
+            crate::todo::TodoStatus::Pending
+        );
+    }
+
+    #[test]
+    fn todo_command_list_with_items() {
+        let reg = CommandRegistry::new();
+        let mut ctx = make_context();
+        ctx.todos.add("Task 1");
+        ctx.todos.add("Task 2");
+        ctx.todos.update_status(1, crate::todo::TodoStatus::Done);
+        let result = reg.dispatch("/todo", &mut ctx).unwrap();
+        assert!(result.output.contains("Task 1"));
+        assert!(result.output.contains("Task 2"));
+        assert!(result.output.contains("2 todos"));
+    }
+
+    #[test]
+    fn todo_command_unknown_subcommand() {
+        let reg = CommandRegistry::new();
+        let mut ctx = make_context();
+        let result = reg.dispatch("/todo foobar", &mut ctx);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn todo_command_done_invalid_id() {
+        let reg = CommandRegistry::new();
+        let mut ctx = make_context();
+        let result = reg.dispatch("/todo done abc", &mut ctx);
         assert!(result.is_err());
     }
 }

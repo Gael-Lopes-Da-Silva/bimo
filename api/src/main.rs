@@ -256,6 +256,13 @@ async fn run_chat_stream(
             let thinking = api.agent.config.thinking.clone();
 
             if first {
+                // Inject todo context before the user message
+                if !api.agent.session.todos.is_empty() {
+                    let context = api.agent.session.todos.render_context();
+                    api.agent
+                        .session
+                        .add_tool_message(&format!("[Current Todo State]\n{}", context));
+                }
                 api.agent.session.add_user_message(user_message);
                 first = false;
             }
@@ -312,6 +319,17 @@ async fn run_chat_stream(
                 }));
 
                 let result = tool::call::execute_tool_call(call, &api.agent.tool_registry).await;
+
+                // Handle todo actions
+                if call.name == "manage_todo"
+                    && !result.is_error
+                    && let Ok(action) = tool::call::parse_todo_action(&call.arguments)
+                {
+                    let todo_result =
+                        tool::call::apply_todo_action(&action, &mut api.agent.session.todos);
+                    let todo_msg = format!("[Todo: {}]", todo_result);
+                    api.agent.session.add_tool_message(&todo_msg);
+                }
 
                 let _ = tx.try_send(Ok(ChatStreamEvent::ToolResult {
                     tool: result.name.clone(),

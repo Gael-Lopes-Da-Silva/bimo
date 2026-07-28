@@ -2,6 +2,7 @@ pub mod manager;
 pub mod persistence;
 
 use crate::prompts;
+use crate::todo::TodoList;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -28,6 +29,7 @@ pub struct Message {
 pub struct Session {
     pub id: String,
     pub messages: Vec<Message>,
+    pub todos: TodoList,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -54,6 +56,7 @@ impl Session {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
             messages: Vec::new(),
+            todos: TodoList::new(),
             created_at: now,
             updated_at: now,
         }

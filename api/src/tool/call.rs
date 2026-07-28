@@ -117,6 +117,10 @@ fn is_common_tag(name: &str) -> bool {
             | "tr"
             | "td"
             | "th"
+            | "todo_action"
+            | "todo_id"
+            | "todo_description"
+            | "todo_new_status"
     )
 }
 
@@ -132,6 +136,7 @@ pub async fn execute_tool_call(call: &ToolCall, registry: &ToolRegistry) -> Tool
         "run_command" => execute_run_command(&arguments).await,
         "search_files" => execute_search_files(&arguments),
         "search_content" => execute_search_content(&arguments),
+        "manage_todo" => execute_manage_todo(&arguments),
         _ => {
             if registry.get(&name).is_some() {
                 format!("[Tool '{}' is registered but not yet implemented]", name)
@@ -341,6 +346,157 @@ fn execute_search_content_fallback(pattern: &str, path: &str, include: Option<&s
     }
 }
 
+// ---------------------------------------------------------------------------
+// Todo tool
+// ---------------------------------------------------------------------------
+
+/// Parsed todo action from the manage_todo tool arguments.
+#[derive(Debug, Clone)]
+pub enum TodoAction {
+    Add { description: String },
+    UpdateStatus { id: u32, status: String },
+    UpdateDescription { id: u32, description: String },
+    Remove { id: u32 },
+    List,
+}
+
+/// Parse a todo action from tool arguments.
+pub fn parse_todo_action(args: &HashMap<String, String>) -> Result<TodoAction, String> {
+    let action = args
+        .get("action")
+        .ok_or_else(|| "[Error] Missing required parameter: action".to_string())?;
+
+    match action.as_str() {
+        "add" => {
+            let description = args
+                .get("description")
+                .ok_or_else(|| "[Error] add requires 'description' parameter".to_string())?;
+            Ok(TodoAction::Add {
+                description: description.clone(),
+            })
+        }
+        "update_status" => {
+            let id = args
+                .get("id")
+                .ok_or_else(|| "[Error] update_status requires 'id' parameter".to_string())?
+                .parse::<u32>()
+                .map_err(|_| "[Error] 'id' must be a valid number".to_string())?;
+            let status = args
+                .get("status")
+                .ok_or_else(|| "[Error] update_status requires 'status' parameter".to_string())?;
+            if !matches!(status.as_str(), "pending" | "in_progress" | "done") {
+                return Err("[Error] status must be one of: pending, in_progress, done".to_string());
+            }
+            Ok(TodoAction::UpdateStatus {
+                id,
+                status: status.clone(),
+            })
+        }
+        "update_description" => {
+            let id = args
+                .get("id")
+                .ok_or_else(|| "[Error] update_description requires 'id' parameter".to_string())?
+                .parse::<u32>()
+                .map_err(|_| "[Error] 'id' must be a valid number".to_string())?;
+            let description = args.get("description").ok_or_else(|| {
+                "[Error] update_description requires 'description' parameter".to_string()
+            })?;
+            Ok(TodoAction::UpdateDescription {
+                id,
+                description: description.clone(),
+            })
+        }
+        "remove" => {
+            let id = args
+                .get("id")
+                .ok_or_else(|| "[Error] remove requires 'id' parameter".to_string())?
+                .parse::<u32>()
+                .map_err(|_| "[Error] 'id' must be a valid number".to_string())?;
+            Ok(TodoAction::Remove { id })
+        }
+        "list" => Ok(TodoAction::List),
+        other => Err(format!(
+            "[Error] Unknown todo action: '{}'. Valid actions: add, update_status, update_description, remove, list",
+            other
+        )),
+    }
+}
+
+/// Execute a manage_todo tool call. Returns the action as XML for the agent to parse.
+fn execute_manage_todo(args: &HashMap<String, String>) -> String {
+    match parse_todo_action(args) {
+        Ok(action) => match action {
+            TodoAction::Add { description } => {
+                format!(
+                    "<todo_action>add</todo_action><todo_description>{}</todo_description>",
+                    description
+                )
+            }
+            TodoAction::UpdateStatus { id, status } => {
+                format!(
+                    "<todo_action>update_status</todo_action><todo_id>{}</todo_id><todo_new_status>{}</todo_new_status>",
+                    id, status
+                )
+            }
+            TodoAction::UpdateDescription { id, description } => {
+                format!(
+                    "<todo_action>update_description</todo_action><todo_id>{}</todo_id><todo_description>{}</todo_description>",
+                    id, description
+                )
+            }
+            TodoAction::Remove { id } => {
+                format!("<todo_action>remove</todo_action><todo_id>{}</todo_id>", id)
+            }
+            TodoAction::List => "<todo_action>list</todo_action>".to_string(),
+        },
+        Err(e) => e,
+    }
+}
+
+/// Apply a parsed todo action to the given todo list. Returns a result message.
+pub fn apply_todo_action(action: &TodoAction, todos: &mut crate::todo::TodoList) -> String {
+    use crate::todo::TodoStatus;
+
+    match action {
+        TodoAction::Add { description } => {
+            let item = todos.add(description);
+            format!("Added todo #{}: {}", item.id, item.description)
+        }
+        TodoAction::UpdateStatus { id, status } => {
+            let new_status = match status.as_str() {
+                "pending" => TodoStatus::Pending,
+                "in_progress" => TodoStatus::InProgress,
+                "done" => TodoStatus::Done,
+                _ => return format!("[Error] Invalid status: {}", status),
+            };
+            match todos.update_status(*id, new_status) {
+                Some(item) => format!("Updated todo #{} status to {}", item.id, item.status),
+                None => format!("[Error] Todo #{} not found", id),
+            }
+        }
+        TodoAction::UpdateDescription { id, description } => {
+            match todos.update_description(*id, description) {
+                Some(item) => format!(
+                    "Updated todo #{} description to: {}",
+                    item.id, item.description
+                ),
+                None => format!("[Error] Todo #{} not found", id),
+            }
+        }
+        TodoAction::Remove { id } => match todos.remove(*id) {
+            Some(item) => format!("Removed todo #{}: {}", item.id, item.description),
+            None => format!("[Error] Todo #{} not found", id),
+        },
+        TodoAction::List => {
+            if todos.is_empty() {
+                "No todos.".to_string()
+            } else {
+                format!("Current todos:\n{}", todos.render_full())
+            }
+        }
+    }
+}
+
 fn search_dir_fallback(
     dir: &Path,
     re: &regex::Regex,
@@ -483,5 +639,140 @@ Done! I've written the file."#;
         assert!(msg.contains("read_file"));
         assert!(msg.contains("path"));
         assert!(msg.contains("Hello"));
+    }
+
+    #[test]
+    fn is_common_tag_todo_tags() {
+        assert!(is_common_tag("todo_action"));
+        assert!(is_common_tag("todo_id"));
+        assert!(is_common_tag("todo_description"));
+        assert!(is_common_tag("todo_new_status"));
+    }
+
+    #[test]
+    fn parse_todo_action_add() {
+        let mut args = HashMap::new();
+        args.insert("action".into(), "add".into());
+        args.insert("description".into(), "Implement feature".into());
+        let action = parse_todo_action(&args).unwrap();
+        match action {
+            TodoAction::Add { description } => {
+                assert_eq!(description, "Implement feature");
+            }
+            _ => panic!("expected Add action"),
+        }
+    }
+
+    #[test]
+    fn parse_todo_action_update_status() {
+        let mut args = HashMap::new();
+        args.insert("action".into(), "update_status".into());
+        args.insert("id".into(), "1".into());
+        args.insert("status".into(), "done".into());
+        let action = parse_todo_action(&args).unwrap();
+        match action {
+            TodoAction::UpdateStatus { id, status } => {
+                assert_eq!(id, 1);
+                assert_eq!(status, "done");
+            }
+            _ => panic!("expected UpdateStatus action"),
+        }
+    }
+
+    #[test]
+    fn parse_todo_action_invalid_status() {
+        let mut args = HashMap::new();
+        args.insert("action".into(), "update_status".into());
+        args.insert("id".into(), "1".into());
+        args.insert("status".into(), "invalid".into());
+        assert!(parse_todo_action(&args).is_err());
+    }
+
+    #[test]
+    fn parse_todo_action_remove() {
+        let mut args = HashMap::new();
+        args.insert("action".into(), "remove".into());
+        args.insert("id".into(), "2".into());
+        let action = parse_todo_action(&args).unwrap();
+        match action {
+            TodoAction::Remove { id } => assert_eq!(id, 2),
+            _ => panic!("expected Remove action"),
+        }
+    }
+
+    #[test]
+    fn parse_todo_action_list() {
+        let mut args = HashMap::new();
+        args.insert("action".into(), "list".into());
+        let action = parse_todo_action(&args).unwrap();
+        assert!(matches!(action, TodoAction::List));
+    }
+
+    #[test]
+    fn parse_todo_action_missing_id() {
+        let mut args = HashMap::new();
+        args.insert("action".into(), "remove".into());
+        assert!(parse_todo_action(&args).is_err());
+    }
+
+    #[test]
+    fn parse_todo_action_invalid_id() {
+        let mut args = HashMap::new();
+        args.insert("action".into(), "remove".into());
+        args.insert("id".into(), "abc".into());
+        assert!(parse_todo_action(&args).is_err());
+    }
+
+    #[test]
+    fn apply_todo_action_add() {
+        let mut list = crate::todo::TodoList::new();
+        let action = TodoAction::Add {
+            description: "Test task".into(),
+        };
+        let result = apply_todo_action(&action, &mut list);
+        assert!(result.contains("Added todo #1"));
+        assert_eq!(list.len(), 1);
+    }
+
+    #[test]
+    fn apply_todo_action_update_status() {
+        let mut list = crate::todo::TodoList::new();
+        list.add("Task");
+        let action = TodoAction::UpdateStatus {
+            id: 1,
+            status: "done".into(),
+        };
+        let result = apply_todo_action(&action, &mut list);
+        assert!(result.contains("status to done"));
+        assert_eq!(list.items()[0].status, crate::todo::TodoStatus::Done);
+    }
+
+    #[test]
+    fn apply_todo_action_remove() {
+        let mut list = crate::todo::TodoList::new();
+        list.add("Task");
+        let action = TodoAction::Remove { id: 1 };
+        let result = apply_todo_action(&action, &mut list);
+        assert!(result.contains("Removed"));
+        assert!(list.is_empty());
+    }
+
+    #[test]
+    fn apply_todo_action_list() {
+        let mut list = crate::todo::TodoList::new();
+        list.add("Task 1");
+        list.add("Task 2");
+        let action = TodoAction::List;
+        let result = apply_todo_action(&action, &mut list);
+        assert!(result.contains("Task 1"));
+        assert!(result.contains("Task 2"));
+    }
+
+    #[test]
+    fn apply_todo_action_list_empty() {
+        let mut list = crate::todo::TodoList::new();
+        let action = TodoAction::List;
+        let result = apply_todo_action(&action, &mut list);
+        assert_eq!(result, "No todos.");
     }
 }

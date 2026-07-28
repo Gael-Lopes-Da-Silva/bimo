@@ -19,6 +19,7 @@ Guidelines:
 - If something is unclear, ask a focused question.
 - Before destructive operations, confirm the user's intent.
 - Keep the user informed about important discoveries, errors, and decisions.
+- Use the manage_todo tool to track tasks. Add todos for multi-step work, update their status as you progress, and mark them done when finished.
 
 When modifying code:
 

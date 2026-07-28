@@ -274,10 +274,14 @@ impl Agent {
         let model = self
             .config
             .selected_model
-            .as_deref()
+            .clone()
             .ok_or_else(|| BimoError::Model("no model selected".into()))?;
 
-        tracing::debug!(provider = %runtime.id, model, session_id = %self.session.id, "sending chat completion");
+        tracing::debug!(provider = %runtime.id, model = %model, session_id = %self.session.id, "sending chat completion");
+
+        // Inject todo context before the user message
+        self.inject_todo_context();
+
         self.session.add_user_message(user_message);
 
         let mut total_tool_calls: Vec<ToolCall> = Vec::new();
@@ -287,7 +291,7 @@ impl Agent {
         for iteration in 0..=MAX_TOOL_ITERATIONS {
             let messages = self.session.to_chat_messages();
             let response =
-                provider::chat_completion(&runtime, &messages, model, &self.config.thinking)
+                provider::chat_completion(&runtime, &messages, &model, &self.config.thinking)
                     .await?;
 
             // Parse tool calls from the response
@@ -326,6 +330,19 @@ impl Agent {
                 tracing::debug!(tool = %call.name, args = ?call.arguments, "executing tool");
                 let result = tool::call::execute_tool_call(call, &self.tool_registry).await;
                 tracing::debug!(tool = %call.name, is_error = result.is_error, "tool executed");
+
+                // Handle todo actions
+                if call.name == "manage_todo"
+                    && !result.is_error
+                    && let Ok(action) = tool::call::parse_todo_action(&call.arguments)
+                {
+                    let todo_result =
+                        tool::call::apply_todo_action(&action, &mut self.session.todos);
+                    tracing::debug!(todo_action = ?action, "todo action applied");
+                    // Add the todo result as an additional tool message
+                    let todo_msg = format!("[Todo: {}]", todo_result);
+                    self.session.add_tool_message(&todo_msg);
+                }
 
                 // Add tool result to session
                 let result_msg = tool::call::format_tool_result_message(&result);
@@ -429,6 +446,15 @@ impl Agent {
     pub fn clear_session(&mut self) {
         tracing::info!(session_id = %self.session.id, messages = self.session.message_count(), "clearing session");
         self.session.clear();
+    }
+
+    /// Inject a todo context message so the LLM sees the current todo state.
+    fn inject_todo_context(&mut self) {
+        if !self.session.todos.is_empty() {
+            let context = self.session.todos.render_context();
+            self.session
+                .add_tool_message(&format!("[Current Todo State]\n{}", context));
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -604,6 +630,7 @@ impl Agent {
             tree_fork_index: None,
             tree_revert_index: None,
             thinking: self.config.thinking.clone(),
+            todos: self.session.todos.clone(),
             active_session_id: self.session.id.clone(),
             all_sessions: vec![],
             switch_session_id: None,
@@ -614,6 +641,7 @@ impl Agent {
         self.config.selected_provider = ctx.selected_provider.clone();
         self.config.selected_model = ctx.selected_model.clone();
         self.config.thinking = ctx.thinking.clone();
+        self.session.todos = ctx.todos.clone();
     }
 }
 

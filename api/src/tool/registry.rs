@@ -131,6 +131,42 @@ impl ToolRegistry {
                 },
             ],
         });
+
+        self.tools.push(Tool {
+            name: "manage_todo".into(),
+            description: "Manage the session todo list. Actions: add (requires description), update_status (requires id and status: pending/in_progress/done), update_description (requires id and description), remove (requires id), list. The current todo state is shown in the context at the start of each turn."
+                .into(),
+            parameters: vec![
+                ToolParameter {
+                    name: "action".into(),
+                    description: "The action to perform: add, update_status, update_description, remove, list"
+                        .into(),
+                    required: true,
+                    parameter_type: "string".into(),
+                },
+                ToolParameter {
+                    name: "id".into(),
+                    description: "The numeric id of the todo item (required for update_status, update_description, remove)"
+                        .into(),
+                    required: false,
+                    parameter_type: "number".into(),
+                },
+                ToolParameter {
+                    name: "description".into(),
+                    description: "The todo description (required for add, required for update_description)"
+                        .into(),
+                    required: false,
+                    parameter_type: "string".into(),
+                },
+                ToolParameter {
+                    name: "status".into(),
+                    description: "The new status: pending, in_progress, or done (required for update_status)"
+                        .into(),
+                    required: false,
+                    parameter_type: "string".into(),
+                },
+            ],
+        });
     }
 
     pub fn register(&mut self, tool: Tool) {
@@ -183,7 +219,7 @@ mod tests {
     #[test]
     fn builtin_tools_registered() {
         let reg = ToolRegistry::new();
-        assert_eq!(reg.tools.len(), 6);
+        assert_eq!(reg.tools.len(), 7);
     }
 
     #[test]
@@ -196,6 +232,7 @@ mod tests {
         assert!(names.contains(&"run_command"));
         assert!(names.contains(&"search_files"));
         assert!(names.contains(&"search_content"));
+        assert!(names.contains(&"manage_todo"));
     }
 
     #[test]
@@ -239,7 +276,7 @@ mod tests {
             parameters: vec![],
         });
         assert!(reg.get("custom").is_some());
-        assert_eq!(reg.tools.len(), 7);
+        assert_eq!(reg.tools.len(), 8);
     }
 
     #[test]
@@ -261,6 +298,7 @@ mod tests {
             "run_command",
             "search_files",
             "search_content",
+            "manage_todo",
         ] {
             assert!(
                 xml.contains(&format!("<name>{name}</name>")),
