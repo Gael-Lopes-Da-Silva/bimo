@@ -5,8 +5,12 @@ use crate::model::{self, ModelInfo};
 use crate::prompts;
 use crate::provider::{self, ProviderInfo, ProviderRegistry, ProviderRuntime, UsageInfo};
 use crate::session::Session;
+use crate::tool_call::{self, ToolCall, ToolResult};
 use crate::tools::ToolRegistry;
 use tracing;
+
+/// Maximum number of tool call iterations per chat request.
+const MAX_TOOL_ITERATIONS: usize = 20;
 
 /// The response from a chat interaction.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -263,21 +267,64 @@ impl Agent {
 
         tracing::debug!(provider = %runtime.id, model, session_id = %self.session.id, "sending chat completion");
         self.session.add_user_message(user_message);
-        let messages = self.session.to_chat_messages();
-        let response = provider::chat_completion(&runtime, &messages, model).await?;
-        self.session.add_assistant_message(&response.content);
 
-        tracing::info!(
-            model = ?response.model,
-            content_len = response.content.len(),
-            "chat done"
-        );
-        Ok(ChatResponse {
-            content: response.content,
-            model: response.model,
-            usage: response.usage,
-            session_id: self.session.id.clone(),
-        })
+        let mut total_tool_calls: Vec<ToolCall> = Vec::new();
+        let mut total_tool_results: Vec<ToolResult> = Vec::new();
+
+        // Tool calling loop
+        for iteration in 0..=MAX_TOOL_ITERATIONS {
+            let messages = self.session.to_chat_messages();
+            let response = provider::chat_completion(&runtime, &messages, model).await?;
+
+            // Parse tool calls from the response
+            let tool_calls = tool_call::parse_tool_calls(&response.content);
+
+            if tool_calls.is_empty() || iteration == MAX_TOOL_ITERATIONS {
+                // No tool calls or max iterations reached - return final response
+                self.session.add_assistant_message(&response.content);
+
+                tracing::info!(
+                    model = ?response.model,
+                    content_len = response.content.len(),
+                    total_tool_calls = total_tool_calls.len(),
+                    "chat done"
+                );
+                return Ok(ChatResponse {
+                    content: response.content,
+                    model: response.model,
+                    usage: response.usage,
+                    session_id: self.session.id.clone(),
+                });
+            }
+
+            // Execute tool calls
+            tracing::info!(
+                iteration,
+                tool_count = tool_calls.len(),
+                "executing tool calls"
+            );
+
+            // Add the assistant's response (with tool calls) to the session
+            self.session.add_assistant_message(&response.content);
+
+            for call in &tool_calls {
+                tracing::debug!(tool = %call.name, args = ?call.arguments, "executing tool");
+                let result = tool_call::execute_tool_call(call, &self.tool_registry).await;
+                tracing::debug!(tool = %call.name, is_error = result.is_error, "tool executed");
+
+                // Add tool result to session
+                let result_msg = tool_call::format_tool_result_message(&result);
+                self.session.add_tool_message(&result_msg);
+
+                total_tool_calls.push(call.clone());
+                total_tool_results.push(result);
+            }
+        }
+
+        // This should never be reached, but just in case
+        Err(BimoError::Provider(
+            "tool call loop exceeded maximum iterations".into(),
+        ))
     }
 
     // -----------------------------------------------------------------------
@@ -413,6 +460,7 @@ impl Agent {
                     crate::session::Role::User => "User",
                     crate::session::Role::Assistant => "Assistant",
                     crate::session::Role::System => "System",
+                    crate::session::Role::Tool => "Tool",
                 };
                 format!("{role}: {}", m.content)
             })

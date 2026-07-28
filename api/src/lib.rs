@@ -7,6 +7,7 @@ pub mod model;
 pub mod prompts;
 pub mod provider;
 pub mod session;
+pub mod tool_call;
 pub mod tools;
 
 // Re-export the main API types for convenience.

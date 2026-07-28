@@ -14,6 +14,7 @@ pub enum Role {
     System,
     User,
     Assistant,
+    Tool,
 }
 
 /// A single message in a conversation.
@@ -90,6 +91,16 @@ impl Session {
         self.updated_at = Utc::now();
     }
 
+    /// Add a tool result message to the session.
+    pub fn add_tool_message(&mut self, content: &str) {
+        self.messages.push(Message {
+            role: Role::Tool,
+            content: content.to_string(),
+            timestamp: Utc::now(),
+        });
+        self.updated_at = Utc::now();
+    }
+
     /// Return messages formatted for the provider API.
     pub fn to_chat_messages(&self) -> Vec<crate::provider::ChatMessage> {
         self.messages
@@ -99,6 +110,7 @@ impl Session {
                     Role::System => "system".into(),
                     Role::User => "user".into(),
                     Role::Assistant => "assistant".into(),
+                    Role::Tool => "user".into(),
                 },
                 content: m.content.clone(),
             })

@@ -951,6 +951,7 @@ fn format_role(role: &crate::session::Role) -> &'static str {
         crate::session::Role::User => "user",
         crate::session::Role::Assistant => "asst",
         crate::session::Role::System => "sys",
+        crate::session::Role::Tool => "tool",
     }
 }
 
