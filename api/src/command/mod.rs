@@ -282,10 +282,12 @@ pub(crate) fn format_role(role: &crate::session::Role) -> &'static str {
 
 pub(crate) fn truncate(s: &str, max_len: usize) -> String {
     let single_line: String = s.chars().filter(|c| *c != '\n').collect();
-    if single_line.len() <= max_len {
+    let char_count = single_line.chars().count();
+    if char_count <= max_len {
         single_line
     } else {
-        format!("{}...", &single_line[..max_len])
+        let truncated: String = single_line.chars().take(max_len).collect();
+        format!("{}...", truncated)
     }
 }
 

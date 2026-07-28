@@ -441,24 +441,24 @@ impl Agent {
             None => return Ok(()),
         };
 
-        // Handle save
-        if result.output == "Session saved." {
-            tracing::info!(session_id = %self.session.id, "saving session to disk");
-            return self.session.save();
-        }
+        let action = data.get("action").and_then(|v| v.as_str());
 
-        // Handle purge
-        if result.output == "All saved sessions purged." {
-            tracing::info!("purging all saved sessions");
-            return Session::delete_all_saved();
-        }
-
-        // Handle delete — extract session_id from data
-        if let Some(id) = data.get("session_id").and_then(|v| v.as_str())
-            && result.output.starts_with("Deleted session")
-        {
-            tracing::info!(session_id = id, "deleting saved session");
-            return Session::delete_saved(id);
+        match action {
+            Some("save") => {
+                tracing::info!(session_id = %self.session.id, "saving session to disk");
+                return self.session.save();
+            }
+            Some("purge") => {
+                tracing::info!("purging all saved sessions");
+                return Session::delete_all_saved();
+            }
+            Some("delete") => {
+                if let Some(id) = data.get("session_id").and_then(|v| v.as_str()) {
+                    tracing::info!(session_id = id, "deleting saved session");
+                    return Session::delete_saved(id);
+                }
+            }
+            _ => {}
         }
 
         Ok(())

@@ -2,11 +2,14 @@ use crate::config::ThinkingConfig;
 use crate::error::{BimoError, Result};
 use futures_util::StreamExt;
 use reqwest::Client;
+use std::sync::LazyLock;
 use tracing;
 
 use super::types::{
     ChatCompletionResponse, ChatMessage, ProviderRuntime, RawModel, RequestBodyFormat, UsageInfo,
 };
+
+static HTTP_CLIENT: LazyLock<Client> = LazyLock::new(Client::new);
 
 /// Fetch available models from the given provider.
 pub async fn fetch_models(runtime: &ProviderRuntime) -> Result<Vec<RawModel>> {
@@ -18,7 +21,7 @@ pub async fn fetch_models(runtime: &ProviderRuntime) -> Result<Vec<RawModel>> {
         }
     };
 
-    let client = Client::new();
+    let client = &*HTTP_CLIENT;
     let url = format!("{}{}", runtime.base_url.trim_end_matches('/'), endpoint);
     tracing::debug!(provider = %runtime.id, url = %url, "fetching models");
     let mut req = client.get(&url);
@@ -162,7 +165,7 @@ pub async fn chat_completion(
     model: &str,
     thinking: &ThinkingConfig,
 ) -> Result<ChatCompletionResponse> {
-    let client = Client::new();
+    let client = &*HTTP_CLIENT;
     let url = format!(
         "{}{}",
         runtime.base_url.trim_end_matches('/'),
@@ -217,7 +220,7 @@ pub async fn chat_completion_streaming(
 ) -> Result<
     impl futures_util::Stream<Item = std::result::Result<serde_json::Value, BimoError>> + use<>,
 > {
-    let client = Client::new();
+    let client = &*HTTP_CLIENT;
     let url = format!(
         "{}{}",
         runtime.base_url.trim_end_matches('/'),
@@ -365,8 +368,14 @@ fn build_request_body(
             Ok(body)
         }
         RequestBodyFormat::Anthropic => {
-            let msgs: Vec<serde_json::Value> = messages
+            let system_text: Vec<String> = messages
                 .iter()
+                .filter(|m| m.role == "system")
+                .map(|m| m.content.clone())
+                .collect();
+            let non_system: Vec<serde_json::Value> = messages
+                .iter()
+                .filter(|m| m.role != "system")
                 .map(|m| {
                     serde_json::json!({
                         "role": m.role,
@@ -376,9 +385,14 @@ fn build_request_body(
                 .collect();
             let mut body = serde_json::json!({
                 "model": model,
-                "messages": msgs,
+                "messages": non_system,
                 "max_tokens": 8192,
             });
+            if !system_text.is_empty() {
+                body.as_object_mut()
+                    .unwrap()
+                    .insert("system".into(), serde_json::json!(system_text.join("\n")));
+            }
             if thinking.enabled {
                 let budget = thinking.budget_tokens.unwrap_or(10000);
                 body.as_object_mut().unwrap().insert(

@@ -130,7 +130,7 @@ impl SlashCommand for SessionCommand {
             Some("save") => Ok(CommandResult {
                 command: "session".into(),
                 output: "Session saved.".into(),
-                data: None,
+                data: Some(serde_json::json!({ "action": "save" })),
             }),
             Some("resume") => {
                 let id = parts.get(1).ok_or_else(|| {
@@ -148,7 +148,10 @@ impl SlashCommand for SessionCommand {
                             &info.id[..8.min(info.id.len())],
                             info.message_count,
                         ),
-                        data: Some(serde_json::json!({ "session_id": info.id })),
+                        data: Some(serde_json::json!({
+                            "action": "resume",
+                            "session_id": info.id
+                        })),
                     }),
                     None => Err(BimoError::Command(format!(
                         "session '{id}' not found. Use /session list."
@@ -175,7 +178,10 @@ impl SlashCommand for SessionCommand {
                                 &info.id[..8.min(info.id.len())],
                                 info.message_count,
                             ),
-                            data: Some(serde_json::json!({ "session_id": info.id })),
+                            data: Some(serde_json::json!({
+                                "action": "switch",
+                                "session_id": info.id
+                            })),
                         })
                     }
                     None => Err(BimoError::Command(format!(
@@ -195,7 +201,10 @@ impl SlashCommand for SessionCommand {
                     Some(info) => Ok(CommandResult {
                         command: "session".into(),
                         output: format!("Deleted session {}.", &info.id[..8.min(info.id.len())]),
-                        data: Some(serde_json::json!({ "session_id": info.id })),
+                        data: Some(serde_json::json!({
+                            "action": "delete",
+                            "session_id": info.id
+                        })),
                     }),
                     None => Err(BimoError::Command(format!(
                         "session '{id}' not found. Use /session list."
@@ -223,7 +232,7 @@ impl SlashCommand for SessionCommand {
             Some("purge") => Ok(CommandResult {
                 command: "session".into(),
                 output: "All saved sessions purged.".into(),
-                data: None,
+                data: Some(serde_json::json!({ "action": "purge" })),
             }),
             Some(other) => Err(BimoError::Command(format!(
                 "unknown subcommand '{other}'. Usage: /session [list|save|resume|switch|delete|info|purge]"

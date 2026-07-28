@@ -10,12 +10,12 @@ use bimo_api::provider;
 use bimo_api::tool;
 use futures_util::StreamExt;
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::EnvFilter;
 
-type AppState = Arc<Mutex<BimoApi>>;
+type AppState = Arc<RwLock<BimoApi>>;
 
 #[tokio::main]
 async fn main() {
@@ -26,7 +26,7 @@ async fn main() {
         .init();
 
     let api = BimoApi::new();
-    let state: AppState = Arc::new(Mutex::new(api));
+    let state: AppState = Arc::new(RwLock::new(api));
 
     let cors = CorsLayer::new()
         .allow_origin(Any)
@@ -87,7 +87,7 @@ fn api_response_to_http(resp: ApiResponse) -> (StatusCode, Json<ApiResponse>) {
 
 async fn list_providers(State(state): State<AppState>) -> Json<ApiResponse> {
     tracing::debug!("GET /api/provider/list");
-    let api = state.lock().await;
+    let api = state.read().await;
     let resp = api.list_providers();
     tracing::debug!(success = resp.success, "GET /api/provider/list -> ok");
     Json(resp)
@@ -98,7 +98,7 @@ async fn select_provider(
     Json(req): Json<SelectProviderRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     tracing::info!(provider_id = %req.provider_id, "POST /api/provider/select");
-    let mut api = state.lock().await;
+    let mut api = state.write().await;
     let resp = api.select_provider(req).await;
     tracing::info!(success = resp.success, "POST /api/provider/select -> done");
     api_response_to_http(resp)
@@ -109,7 +109,7 @@ async fn configure_provider(
     Json(req): Json<ConfigureProviderRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     tracing::info!(provider_id = %req.provider_id, has_base_url = req.base_url.is_some(), has_api_key = req.api_key.is_some(), "POST /api/provider/configure");
-    let mut api = state.lock().await;
+    let mut api = state.write().await;
     let resp = api.configure_provider(req);
     tracing::info!(
         success = resp.success,
@@ -123,7 +123,7 @@ async fn add_custom_provider(
     Json(req): Json<AddCustomProviderRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     tracing::info!(id = %req.id, name = %req.name, category = %req.category, "POST /api/provider/add");
-    let mut api = state.lock().await;
+    let mut api = state.write().await;
     let resp = api.add_custom_provider(req);
     tracing::info!(success = resp.success, "POST /api/provider/add -> done");
     api_response_to_http(resp)
@@ -131,7 +131,7 @@ async fn add_custom_provider(
 
 async fn list_models(State(state): State<AppState>) -> Json<ApiResponse> {
     tracing::debug!("GET /api/model/list");
-    let mut api = state.lock().await;
+    let mut api = state.write().await;
     let resp = api.list_models().await;
     tracing::debug!(success = resp.success, "GET /api/model/list -> ok");
     Json(resp)
@@ -142,7 +142,7 @@ async fn select_model(
     Json(req): Json<SelectModelRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     tracing::info!(model_id = %req.model_id, "POST /api/model/select");
-    let mut api = state.lock().await;
+    let mut api = state.write().await;
     let resp = api.select_model(req);
     tracing::info!(success = resp.success, "POST /api/model/select -> done");
     api_response_to_http(resp)
@@ -153,7 +153,7 @@ async fn chat(
     Json(req): Json<ChatRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     tracing::info!(message_len = req.message.len(), session_id = ?req.session_id, "POST /api/chat");
-    let mut api = state.lock().await;
+    let mut api = state.write().await;
 
     // Switch to the target session if specified
     if let Some(sid) = &req.session_id
@@ -232,7 +232,7 @@ async fn run_chat_stream(
 
     for iteration in 0..=MAX_TOOL_ITERATIONS {
         {
-            let mut api = state.lock().await;
+            let mut api = state.write().await;
 
             // Switch to the target session if specified
             if let Some(sid) = session_id
@@ -329,7 +329,7 @@ async fn run_chat_stream(
 
 async fn get_session(State(state): State<AppState>) -> Json<ApiResponse> {
     tracing::debug!("GET /api/session");
-    let api = state.lock().await;
+    let api = state.read().await;
     let resp = api.get_session();
     tracing::debug!(success = resp.success, "GET /api/session -> ok");
     Json(resp)
@@ -337,7 +337,7 @@ async fn get_session(State(state): State<AppState>) -> Json<ApiResponse> {
 
 async fn create_session(State(state): State<AppState>) -> Json<ApiResponse> {
     tracing::info!("POST /api/session");
-    let mut api = state.lock().await;
+    let mut api = state.write().await;
     let resp = api.create_session();
     tracing::info!(success = resp.success, "POST /api/session -> done");
     Json(resp)
@@ -345,7 +345,7 @@ async fn create_session(State(state): State<AppState>) -> Json<ApiResponse> {
 
 async fn list_sessions(State(state): State<AppState>) -> Json<ApiResponse> {
     tracing::debug!("GET /api/session/list");
-    let api = state.lock().await;
+    let api = state.read().await;
     let resp = api.list_sessions();
     tracing::debug!(success = resp.success, "GET /api/session/list -> ok");
     Json(resp)
@@ -356,7 +356,7 @@ async fn switch_session(
     Json(req): Json<SwitchSessionRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     tracing::info!(session_id = %req.session_id, "POST /api/session/switch");
-    let mut api = state.lock().await;
+    let mut api = state.write().await;
     let resp = api.switch_session(req);
     tracing::info!(success = resp.success, "POST /api/session/switch -> done");
     api_response_to_http(resp)
@@ -367,7 +367,7 @@ async fn get_session_by_id(
     Path(session_id): Path<String>,
 ) -> Json<ApiResponse> {
     tracing::debug!(session_id = %session_id, "GET /api/session/:session_id");
-    let api = state.lock().await;
+    let api = state.read().await;
     let resp = api.get_session_by_id(&session_id);
     tracing::debug!(success = resp.success, "GET /api/session/:session_id -> ok");
     Json(resp)
@@ -378,7 +378,7 @@ async fn delete_session(
     Path(session_id): Path<String>,
 ) -> (StatusCode, Json<ApiResponse>) {
     tracing::info!(session_id = %session_id, "DELETE /api/session/:session_id");
-    let mut api = state.lock().await;
+    let mut api = state.write().await;
     let resp = api.delete_session_from_pool(&session_id);
     tracing::info!(
         success = resp.success,
@@ -389,7 +389,7 @@ async fn delete_session(
 
 async fn clear_session(State(state): State<AppState>) -> Json<ApiResponse> {
     tracing::info!("POST /api/session/clear");
-    let mut api = state.lock().await;
+    let mut api = state.write().await;
     let resp = api.clear_session();
     tracing::info!("POST /api/session/clear -> done");
     Json(resp)
@@ -400,7 +400,7 @@ async fn execute_command(
     Json(req): Json<CommandRequest>,
 ) -> (StatusCode, Json<ApiResponse>) {
     tracing::info!(command = %req.command, "POST /api/command");
-    let mut api = state.lock().await;
+    let mut api = state.write().await;
     let resp = api.execute_command(req).await;
     tracing::info!(success = resp.success, "POST /api/command -> done");
     api_response_to_http(resp)
@@ -408,7 +408,7 @@ async fn execute_command(
 
 async fn status(State(state): State<AppState>) -> Json<ApiResponse> {
     tracing::debug!("GET /api/status");
-    let api = state.lock().await;
+    let api = state.read().await;
     let resp = api.status();
     tracing::debug!(success = resp.success, "GET /api/status -> ok");
     Json(resp)
@@ -416,7 +416,7 @@ async fn status(State(state): State<AppState>) -> Json<ApiResponse> {
 
 async fn help(State(state): State<AppState>) -> Json<ApiResponse> {
     tracing::debug!("GET /api/help");
-    let api = state.lock().await;
+    let api = state.read().await;
     let resp = api.help();
     tracing::debug!(success = resp.success, "GET /api/help -> ok");
     Json(resp)
@@ -424,7 +424,7 @@ async fn help(State(state): State<AppState>) -> Json<ApiResponse> {
 
 async fn list_commands(State(state): State<AppState>) -> Json<ApiResponse> {
     tracing::debug!("GET /api/commands");
-    let api = state.lock().await;
+    let api = state.read().await;
     let resp = api.list_commands();
     tracing::debug!(success = resp.success, "GET /api/commands -> ok");
     Json(resp)
@@ -432,7 +432,7 @@ async fn list_commands(State(state): State<AppState>) -> Json<ApiResponse> {
 
 async fn get_context(State(state): State<AppState>) -> Json<ApiResponse> {
     tracing::debug!("GET /api/session/context");
-    let api = state.lock().await;
+    let api = state.read().await;
     let resp = api.get_context();
     tracing::debug!(success = resp.success, "GET /api/session/context -> ok");
     Json(resp)
@@ -440,7 +440,7 @@ async fn get_context(State(state): State<AppState>) -> Json<ApiResponse> {
 
 async fn get_thinking(State(state): State<AppState>) -> Json<ApiResponse> {
     tracing::debug!("GET /api/thinking");
-    let api = state.lock().await;
+    let api = state.read().await;
     let resp = api.get_thinking();
     tracing::debug!(success = resp.success, "GET /api/thinking -> ok");
     Json(resp)

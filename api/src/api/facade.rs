@@ -431,8 +431,8 @@ impl BimoApi {
 
                 // Handle session switch: check if this was a switch command
                 if result.command == "session"
-                    && result.output.starts_with("Switching to session")
                     && let Some(data) = &result.data
+                    && data.get("action").and_then(|v| v.as_str()) == Some("switch")
                     && let Some(sid) = data.get("session_id").and_then(|v| v.as_str())
                 {
                     self.sync_active_to_pool();
@@ -451,8 +451,8 @@ impl BimoApi {
 
                 // Handle session resume: same as switch
                 if result.command == "session"
-                    && result.output.starts_with("Resumed session")
                     && let Some(data) = &result.data
+                    && data.get("action").and_then(|v| v.as_str()) == Some("resume")
                     && let Some(sid) = data.get("session_id").and_then(|v| v.as_str())
                 {
                     self.sync_active_to_pool();

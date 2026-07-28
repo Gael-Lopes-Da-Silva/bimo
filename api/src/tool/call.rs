@@ -1,10 +1,18 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::process::Command;
+use std::sync::LazyLock;
 
 use serde::{Deserialize, Serialize};
 
 use super::registry::ToolRegistry;
+
+const MAX_OUTPUT_BYTES: usize = 50_000;
+
+static TAG_PATTERN: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"<(\w+)\s+([^>]*?)/?>").unwrap());
+static ATTR_PATTERN: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r#"(\w+)=(?:"([^"]*)"|'([^']*)')"#).unwrap());
 
 /// A parsed tool call extracted from the LLM's response.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -31,8 +39,8 @@ pub struct ToolResult {
 /// Also handles content between the tags for tools that use it (e.g. write_file).
 pub fn parse_tool_calls(input: &str) -> Vec<ToolCall> {
     let mut calls = Vec::new();
-    let tag_pattern = regex::Regex::new(r"<(\w+)\s+([^>]*?)/?>").unwrap();
-    let attr_pattern = regex::Regex::new(r#"(\w+)=(?:"([^"]*)"|'([^']*)')"#).unwrap();
+    let tag_pattern = &*TAG_PATTERN;
+    let attr_pattern = &*ATTR_PATTERN;
 
     for cap in tag_pattern.captures_iter(input) {
         let name = cap[1].to_string();
@@ -210,8 +218,15 @@ async fn execute_run_command(args: &HashMap<String, String>) -> String {
         None => return "[Error] Missing required parameter: command".into(),
     };
 
-    match Command::new("sh").arg("-c").arg(command).output() {
-        Ok(output) => {
+    use tokio::time::{Duration, timeout};
+
+    let fut = tokio::process::Command::new("sh")
+        .arg("-c")
+        .arg(command)
+        .output();
+
+    match timeout(Duration::from_secs(30), fut).await {
+        Ok(Ok(output)) => {
             let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
             let mut result = String::new();
@@ -224,13 +239,20 @@ async fn execute_run_command(args: &HashMap<String, String>) -> String {
                 }
                 result.push_str(&stderr);
             }
-            if result.is_empty() {
+            if result.len() > MAX_OUTPUT_BYTES {
+                let truncated: String = result.chars().take(MAX_OUTPUT_BYTES).collect();
+                format!(
+                    "{}\n\n[Output truncated at {} chars]",
+                    truncated, MAX_OUTPUT_BYTES
+                )
+            } else if result.is_empty() {
                 format!("[Command '{}' completed with no output]", command)
             } else {
                 result
             }
         }
-        Err(e) => format!("[Error] Failed to execute '{}': {}", command, e),
+        Ok(Err(e)) => format!("[Error] Failed to execute '{}': {}", command, e),
+        Err(_) => format!("[Error] Command '{}' timed out after 30 seconds]", command),
     }
 }
 
@@ -309,9 +331,10 @@ fn execute_search_content_fallback(pattern: &str, path: &str, include: Option<&s
     if results.is_empty() {
         "No matches found.".into()
     } else if results.len() > 500 {
+        let total = results.len();
         results.truncate(500);
         let mut out = results.join("\n");
-        out.push_str(&format!("\n\n[Showing 500 of {} matches]", results.len()));
+        out.push_str(&format!("\n\n[Showing 500 of {} matches]", total));
         out
     } else {
         results.join("\n")
