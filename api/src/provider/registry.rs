@@ -69,6 +69,20 @@ pub fn builtin_providers() -> Vec<ProviderInfo> {
     ]
 }
 
+/// Look up the API key for a builtin provider from environment variables.
+fn env_api_key(provider_id: &str) -> Option<String> {
+    match provider_id {
+        "openai" => std::env::var("OPENAI_API_KEY").ok(),
+        "anthropic" => std::env::var("ANTHROPIC_API_KEY").ok(),
+        "openrouter" => std::env::var("OPENROUTER_API_KEY").ok(),
+        "opencode-go" => std::env::var("OPENCODE_GO_API_KEY").ok(),
+        "opencode-zen" => std::env::var("OPENCODE_ZEN_API_KEY").ok(),
+        "ollama" => std::env::var("OLLAMA_API_KEY").ok(),
+        "lmstudio" => std::env::var("LMSTUDIO_API_KEY").ok(),
+        _ => None,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Registry
 // ---------------------------------------------------------------------------
@@ -134,19 +148,12 @@ impl ProviderRegistry {
             .unwrap_or_else(|| info.default_base_url.clone());
         let api_key = persisted.and_then(|p| p.api_key.clone());
 
-        if info.requires_api_key && api_key.is_none() {
-            let env_key = match info.id.as_str() {
-                "openai" => std::env::var("OPENAI_API_KEY").ok(),
-                "anthropic" => std::env::var("ANTHROPIC_API_KEY").ok(),
-                _ => None,
-            };
-            if env_key.is_none() {
-                return Err(BimoError::Provider(format!(
-                    "provider '{}' requires an API key. \
-                     Set it via /provider configure or the environment variable.",
-                    info.id
-                )));
-            }
+        if info.requires_api_key && api_key.is_none() && env_api_key(&info.id).is_none() {
+            return Err(BimoError::Provider(format!(
+                "provider '{}' requires an API key. \
+                 Set it via /provider configure or the environment variable.",
+                info.id
+            )));
         }
 
         let (chat_endpoint, models_endpoint, auth_header, auth_prefix, format) =
@@ -174,11 +181,7 @@ impl ProviderRegistry {
                 ),
             };
 
-        let api_key = api_key.or_else(|| match info.id.as_str() {
-            "openai" => std::env::var("OPENAI_API_KEY").ok(),
-            "anthropic" => std::env::var("ANTHROPIC_API_KEY").ok(),
-            _ => None,
-        });
+        let api_key = api_key.or_else(|| env_api_key(&info.id));
 
         Ok(ProviderRuntime {
             id: info.id.clone(),
