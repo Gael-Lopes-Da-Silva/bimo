@@ -1,11 +1,8 @@
-use crate::error::{BimoError, Result};
+pub mod persistence;
+
 use crate::prompts;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::fs;
-use std::path::PathBuf;
-use tracing;
-use uuid::Uuid;
 
 /// The role of a message participant.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -54,7 +51,7 @@ impl Session {
     pub fn new() -> Self {
         let now = Utc::now();
         Self {
-            id: Uuid::new_v4().to_string(),
+            id: uuid::Uuid::new_v4().to_string(),
             messages: Vec::new(),
             created_at: now,
             updated_at: now,
@@ -138,117 +135,10 @@ impl Session {
         }
     }
 
-    // -------------------------------------------------------------------
-    // Persistence
-    // -------------------------------------------------------------------
-
-    /// Returns the sessions directory (`~/.bimo/sessions/`).
-    fn sessions_dir() -> Result<PathBuf> {
-        let home = dirs::home_dir()
-            .ok_or_else(|| BimoError::Session("cannot determine home directory".into()))?;
-        let dir = home.join(".bimo").join("sessions");
-        fs::create_dir_all(&dir)
-            .map_err(|e| BimoError::Session(format!("failed to create sessions dir: {e}")))?;
-        Ok(dir)
-    }
-
-    /// Path to this session's JSON file.
-    fn session_path(&self) -> Result<PathBuf> {
-        Ok(Self::sessions_dir()?.join(format!("{}.json", self.id)))
-    }
-
-    /// Save the session to disk.
-    pub fn save(&self) -> Result<()> {
-        let path = self.session_path()?;
-        tracing::debug!(session_id = %self.id, path = %path.display(), "saving session");
-        let data = serde_json::to_string_pretty(self)
-            .map_err(|e| BimoError::Session(format!("failed to serialize session: {e}")))?;
-        fs::write(&path, data)
-            .map_err(|e| BimoError::Session(format!("failed to write session file: {e}")))?;
-        tracing::debug!(session_id = %self.id, "session saved");
-        Ok(())
-    }
-
-    /// Load a session from disk by id.
-    pub fn load(id: &str) -> Result<Self> {
-        let path = Self::sessions_dir()?.join(format!("{id}.json"));
-        tracing::debug!(session_id = id, path = %path.display(), "loading session");
-        if !path.exists() {
-            tracing::warn!(session_id = id, "session file not found");
-            return Err(BimoError::Session(format!("session '{id}' not found")));
-        }
-        let data = fs::read_to_string(&path)
-            .map_err(|e| BimoError::Session(format!("failed to read session file: {e}")))?;
-        let session: Session = serde_json::from_str(&data)
-            .map_err(|e| BimoError::Session(format!("failed to parse session file: {e}")))?;
-        tracing::debug!(
-            session_id = id,
-            message_count = session.message_count(),
-            "session loaded"
-        );
-        Ok(session)
-    }
-
-    /// List all saved sessions (returns info summaries, newest first).
-    pub fn list_saved() -> Result<Vec<SessionInfo>> {
-        let dir = Self::sessions_dir()?;
-        tracing::debug!(dir = %dir.display(), "listing saved sessions");
-        let mut sessions = Vec::new();
-
-        let entries = fs::read_dir(&dir)
-            .map_err(|e| BimoError::Session(format!("failed to read sessions dir: {e}")))?;
-
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) == Some("json")
-                && let Ok(data) = fs::read_to_string(&path)
-                && let Ok(session) = serde_json::from_str::<Session>(&data)
-            {
-                sessions.push(session.info());
-            }
-        }
-
-        sessions.sort_by_key(|b| std::cmp::Reverse(b.updated_at));
-        tracing::debug!(count = sessions.len(), "listed saved sessions");
-        Ok(sessions)
-    }
-
-    /// Delete a saved session from disk.
-    pub fn delete_saved(id: &str) -> Result<()> {
-        let path = Self::sessions_dir()?.join(format!("{id}.json"));
-        tracing::info!(session_id = id, "deleting saved session");
-        if !path.exists() {
-            tracing::warn!(session_id = id, "session file not found for deletion");
-            return Err(BimoError::Session(format!("session '{id}' not found")));
-        }
-        fs::remove_file(&path)
-            .map_err(|e| BimoError::Session(format!("failed to delete session file: {e}")))?;
-        tracing::info!(session_id = id, "session deleted");
-        Ok(())
-    }
-
-    /// Delete all saved sessions from disk.
-    pub fn delete_all_saved() -> Result<()> {
-        tracing::info!("deleting all saved sessions");
-        let dir = Self::sessions_dir()?;
-        let entries = fs::read_dir(&dir)
-            .map_err(|e| BimoError::Session(format!("failed to read sessions dir: {e}")))?;
-
-        let mut count = 0;
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) == Some("json") {
-                let _ = fs::remove_file(&path);
-                count += 1;
-            }
-        }
-        tracing::info!(count, "all saved sessions purged");
-        Ok(())
-    }
-
     /// Create a new session forked from this one, keeping only messages up to (and
     /// including) the given index. The new session is saved and returned.
-    pub fn fork(&self, index: usize) -> Result<Self> {
+    pub fn fork(&self, index: usize) -> crate::error::Result<Self> {
+        use crate::error::BimoError;
         if index >= self.messages.len() {
             return Err(BimoError::Session(format!(
                 "index {} out of range (session has {} messages)",
@@ -264,7 +154,8 @@ impl Session {
     }
 
     /// Revert the session by discarding all messages after the given index.
-    pub fn revert(&mut self, index: usize) -> Result<()> {
+    pub fn revert(&mut self, index: usize) -> crate::error::Result<()> {
+        use crate::error::BimoError;
         if index >= self.messages.len() {
             return Err(BimoError::Session(format!(
                 "index {} out of range (session has {} messages)",
@@ -278,8 +169,6 @@ impl Session {
     }
 
     /// Compact the session by replacing the conversation with a summary.
-    /// This keeps the first system message (if any) and replaces everything
-    /// else with a single system message containing the summary.
     pub fn compact(&mut self, summary: &str) {
         let system_messages: Vec<Message> = self
             .messages
@@ -399,7 +288,6 @@ mod tests {
         assert_eq!(forked.message_count(), 2);
         assert_eq!(forked.messages[0].content, "a");
         assert_eq!(forked.messages[1].content, "b");
-        // Original unchanged
         assert_eq!(session.message_count(), 3);
     }
 
@@ -438,7 +326,6 @@ mod tests {
 
         session.compact("conversation summary");
 
-        // Should keep original system message + add summary system message
         assert_eq!(session.message_count(), 2);
         assert_eq!(session.messages[0].role, Role::System);
         assert_eq!(session.messages[0].content, "sys prompt");

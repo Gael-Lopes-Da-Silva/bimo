@@ -7,8 +7,7 @@ pub mod model;
 pub mod prompts;
 pub mod provider;
 pub mod session;
-pub mod tool_call;
-pub mod tools;
+pub mod tool;
 
 // Re-export the main API types for convenience.
 pub use api::BimoApi;

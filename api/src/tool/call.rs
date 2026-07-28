@@ -4,7 +4,7 @@ use std::process::Command;
 
 use serde::{Deserialize, Serialize};
 
-use crate::tools::ToolRegistry;
+use super::registry::ToolRegistry;
 
 /// A parsed tool call extracted from the LLM's response.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -31,15 +31,11 @@ pub struct ToolResult {
 /// Also handles content between the tags for tools that use it (e.g. write_file).
 pub fn parse_tool_calls(input: &str) -> Vec<ToolCall> {
     let mut calls = Vec::new();
-    // Match <word_chars ... /> or <word_chars ...>...</word_chars>
-    // We need to find all XML-like tags that match tool names
     let tag_pattern = regex::Regex::new(r"<(\w+)\s+([^>]*?)/?>").unwrap();
-    // Pattern to extract attributes: name="value" or name='value'
     let attr_pattern = regex::Regex::new(r#"(\w+)=(?:"([^"]*)"|'([^']*)')"#).unwrap();
 
     for cap in tag_pattern.captures_iter(input) {
         let name = cap[1].to_string();
-        // Skip non-tool tags (common HTML/XML tags)
         if is_common_tag(&name) {
             continue;
         }
@@ -59,11 +55,9 @@ pub fn parse_tool_calls(input: &str) -> Vec<ToolCall> {
             arguments.insert(key, value);
         }
 
-        // Also check for content between tags: <tool>content</tool>
         let full_match = cap.get(0).unwrap();
         let full_tag = full_match.as_str();
         if full_tag.ends_with('>') && !full_tag.ends_with("/>") {
-            // Look for closing tag
             let close_tag = format!("</{}>", name);
             let search_start = full_match.end();
             if let Some(close_pos) = input[search_start..].find(&close_tag) {
@@ -174,7 +168,6 @@ fn execute_write_file(args: &HashMap<String, String>) -> String {
         None => return "[Error] Missing required parameter: content".into(),
     };
 
-    // Create parent directories if they don't exist
     if let Some(parent) = Path::new(path).parent()
         && let Err(e) = std::fs::create_dir_all(parent)
     {
@@ -248,7 +241,6 @@ fn execute_search_files(args: &HashMap<String, String>) -> String {
     };
     let path = args.get("path").map(|s| s.as_str()).unwrap_or(".");
 
-    // Use glob crate
     let full_pattern = if Path::new(pattern).is_absolute() {
         pattern.clone()
     } else {
@@ -279,7 +271,6 @@ fn execute_search_content(args: &HashMap<String, String>) -> String {
     let path = args.get("path").map(|s| s.as_str()).unwrap_or(".");
     let include = args.get("include").map(|s| s.as_str());
 
-    // Try to use ripgrep for fast content search
     let mut cmd_args = vec!["--no-heading", "-n", pattern, path];
     if let Some(include_pattern) = include {
         cmd_args.push("--glob");
@@ -290,7 +281,6 @@ fn execute_search_content(args: &HashMap<String, String>) -> String {
         Ok(output) => {
             if output.status.success() {
                 let results = String::from_utf8_lossy(&output.stdout);
-                // Truncate very long results
                 if results.len() > 50_000 {
                     let truncated: String = results.chars().take(50_000).collect();
                     format!("{}\n\n[Results truncated at 50,000 chars]", truncated)
@@ -298,14 +288,10 @@ fn execute_search_content(args: &HashMap<String, String>) -> String {
                     results.to_string()
                 }
             } else {
-                // ripgrep returns exit code 1 when no matches
                 "No matches found.".into()
             }
         }
-        Err(_) => {
-            // Fallback: simple recursive search if ripgrep not available
-            execute_search_content_fallback(pattern, path, include)
-        }
+        Err(_) => execute_search_content_fallback(pattern, path, include),
     }
 }
 

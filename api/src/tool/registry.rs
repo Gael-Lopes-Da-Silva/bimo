@@ -273,11 +273,9 @@ mod tests {
     fn render_tool_xml_format() {
         let reg = ToolRegistry::new();
         let xml = reg.render_tool_xml();
-        // read_file should have one param
         assert!(xml.contains("<name>read_file</name>"));
         assert!(xml.contains("path"));
         assert!(xml.contains("required=\"true\""));
-        // Tool blocks separated by blank lines
         assert!(xml.contains("</tool>\n\n<tool>"));
     }
 

@@ -5,8 +5,7 @@ use crate::model::{self, ModelInfo};
 use crate::prompts;
 use crate::provider::{self, ProviderInfo, ProviderRegistry, ProviderRuntime, UsageInfo};
 use crate::session::Session;
-use crate::tool_call::{self, ToolCall, ToolResult};
-use crate::tools::ToolRegistry;
+use crate::tool::{self, ToolCall, ToolRegistry, ToolResult};
 use tracing;
 
 /// Maximum number of tool call iterations per chat request.
@@ -280,7 +279,7 @@ impl Agent {
                     .await?;
 
             // Parse tool calls from the response
-            let tool_calls = tool_call::parse_tool_calls(&response.content);
+            let tool_calls = tool::call::parse_tool_calls(&response.content);
 
             if tool_calls.is_empty() || iteration == MAX_TOOL_ITERATIONS {
                 // No tool calls or max iterations reached - return final response
@@ -313,11 +312,11 @@ impl Agent {
 
             for call in &tool_calls {
                 tracing::debug!(tool = %call.name, args = ?call.arguments, "executing tool");
-                let result = tool_call::execute_tool_call(call, &self.tool_registry).await;
+                let result = tool::call::execute_tool_call(call, &self.tool_registry).await;
                 tracing::debug!(tool = %call.name, is_error = result.is_error, "tool executed");
 
                 // Add tool result to session
-                let result_msg = tool_call::format_tool_result_message(&result);
+                let result_msg = tool::call::format_tool_result_message(&result);
                 self.session.add_tool_message(&result_msg);
 
                 total_tool_calls.push(call.clone());

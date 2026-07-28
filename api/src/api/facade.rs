@@ -1,164 +1,10 @@
 use crate::agent::Agent;
 use crate::config::CustomProviderConfig;
-use crate::error::{ApiErrorPayload, BimoError};
 use crate::session::Role;
-use serde::{Deserialize, Serialize};
+
+use super::dto::*;
+
 use tracing;
-
-// ---------------------------------------------------------------------------
-// Generic JSON envelope
-// ---------------------------------------------------------------------------
-
-/// The standard JSON response envelope returned by every API endpoint.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ApiResponse {
-    pub success: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub data: Option<serde_json::Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<ApiErrorPayload>,
-}
-
-impl ApiResponse {
-    pub fn ok<T: Serialize>(data: T) -> Self {
-        Self {
-            success: true,
-            data: Some(serde_json::to_value(data).unwrap_or_default()),
-            error: None,
-        }
-    }
-
-    pub fn err(error: BimoError) -> Self {
-        ApiResponse {
-            success: false,
-            data: None,
-            error: Some(ApiErrorPayload::from(&error)),
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Request / response data types
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Deserialize)]
-pub struct ChatRequest {
-    pub message: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct ChatData {
-    pub content: String,
-    pub model: Option<String>,
-    pub usage: Option<crate::provider::UsageInfo>,
-    pub session_id: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct SelectProviderRequest {
-    pub provider_id: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ConfigureProviderRequest {
-    pub provider_id: String,
-    #[serde(default)]
-    pub base_url: Option<String>,
-    #[serde(default)]
-    pub api_key: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct SelectModelRequest {
-    pub model_id: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct AddCustomProviderRequest {
-    pub id: String,
-    pub name: String,
-    #[serde(default = "default_local")]
-    pub category: String,
-    pub base_url: String,
-    #[serde(default)]
-    pub api_key_required: bool,
-    pub chat_endpoint: String,
-    #[serde(default)]
-    pub models_endpoint: Option<String>,
-    #[serde(default)]
-    pub auth_header: Option<String>,
-    #[serde(default)]
-    pub auth_prefix: Option<String>,
-}
-
-fn default_local() -> String {
-    "local".into()
-}
-
-#[derive(Debug, Deserialize)]
-pub struct CommandRequest {
-    pub command: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct StatusData {
-    pub provider: Option<String>,
-    pub model: Option<String>,
-    pub session_id: String,
-    pub message_count: usize,
-    pub needs_configuration: bool,
-}
-
-#[derive(Debug, Serialize)]
-pub struct SessionData {
-    pub session_id: String,
-    pub messages: Vec<crate::session::Message>,
-    pub message_count: usize,
-}
-
-#[derive(Debug, Serialize)]
-pub struct HelpData {
-    pub commands: Vec<CommandHelpEntry>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct CommandHelpEntry {
-    pub name: String,
-    pub description: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct CommandsData {
-    pub commands: Vec<crate::command::CommandInfo>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct ContextData {
-    pub session_id: String,
-    pub messages: Vec<ContextMessage>,
-    pub total_characters: usize,
-    pub estimated_tokens: usize,
-    pub max_context_tokens: usize,
-    pub remaining_tokens: usize,
-    pub usage_percentage: f64,
-}
-
-#[derive(Debug, Serialize)]
-pub struct ContextMessage {
-    pub role: String,
-    pub content: String,
-    pub characters: usize,
-    pub estimated_tokens: usize,
-}
-
-#[derive(Debug, Serialize)]
-pub struct ThinkingData {
-    pub enabled: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub budget_tokens: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reasoning_effort: Option<String>,
-}
 
 // ---------------------------------------------------------------------------
 // BimoApi — the public interface
@@ -166,7 +12,7 @@ pub struct ThinkingData {
 
 /// The top-level API object. Wrap this in any transport (HTTP, gRPC, stdin, etc.).
 pub struct BimoApi {
-    agent: Agent,
+    pub(crate) agent: Agent,
 }
 
 impl Default for BimoApi {
@@ -484,7 +330,6 @@ fn estimate_max_context(model: &Option<String>) -> usize {
     let model_str = model.as_deref().unwrap_or("");
     let lower = model_str.to_lowercase();
 
-    // Anthropic models
     if lower.contains("claude") {
         if lower.contains("opus") || lower.contains("sonnet-4") || lower.contains("3.5") {
             return 200_000;
@@ -494,7 +339,6 @@ fn estimate_max_context(model: &Option<String>) -> usize {
         }
         return 100_000;
     }
-    // OpenAI models
     if lower.contains("o3") || lower.contains("o4") {
         return 200_000;
     }
@@ -510,60 +354,20 @@ fn estimate_max_context(model: &Option<String>) -> usize {
     if lower.contains("gpt-3.5") {
         return 16_385;
     }
-    // Gemini models
     if lower.contains("gemini") {
         return 1_000_000;
     }
-    // Ollama / local models — conservative default
     if lower.contains("llama") || lower.contains("qwen") || lower.contains("deepseek") {
         return 128_000;
     }
 
-    // Unknown model: assume 128k (modern default)
     128_000
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn api_response_ok() {
-        let resp = ApiResponse::ok(serde_json::json!({"key": "value"}));
-        assert!(resp.success);
-        assert!(resp.data.is_some());
-        assert!(resp.error.is_none());
-    }
-
-    #[test]
-    fn api_response_err() {
-        let err = BimoError::Provider("test error".into());
-        let resp = ApiResponse::err(err);
-        assert!(!resp.success);
-        assert!(resp.data.is_none());
-        assert!(resp.error.is_some());
-        assert_eq!(resp.error.unwrap().code, "PROVIDER_ERROR");
-    }
-
-    #[test]
-    fn api_response_serialization() {
-        let resp = ApiResponse::ok(serde_json::json!({"test": true}));
-        let json = serde_json::to_string(&resp).unwrap();
-        assert!(json.contains("\"success\":true"));
-        assert!(json.contains("\"test\":true"));
-        // error field should be skipped
-        assert!(!json.contains("error"));
-    }
-
-    #[test]
-    fn api_response_error_serialization() {
-        let resp = ApiResponse::err(BimoError::Model("bad model".into()));
-        let json = serde_json::to_string(&resp).unwrap();
-        assert!(json.contains("\"success\":false"));
-        assert!(json.contains("MODEL_ERROR"));
-        // data field should be skipped
-        assert!(!json.contains("\"data\""));
-    }
+    use crate::session::Role;
 
     #[test]
     fn list_providers_returns_success() {
@@ -584,7 +388,6 @@ mod tests {
         let data = resp.data.unwrap();
         assert!(data.get("session_id").is_some());
         assert!(data.get("message_count").is_some());
-        // Session starts with 1 system message
         assert_eq!(data["message_count"], 1);
     }
 
@@ -606,7 +409,6 @@ mod tests {
         let data = resp.data.unwrap();
         let commands = data.get("commands").unwrap().as_array().unwrap();
         assert!(!commands.is_empty());
-        // Each command should have name and description
         for cmd in commands {
             assert!(cmd.get("name").is_some());
             assert!(cmd.get("description").is_some());
@@ -616,9 +418,7 @@ mod tests {
     #[test]
     fn clear_session_resets_messages() {
         let mut api = BimoApi::new();
-        // Session starts with 1 system message
         assert_eq!(api.agent.session.message_count(), 1);
-        // Add a user message
         api.agent.session.add_user_message("test");
         assert_eq!(api.agent.session.message_count(), 2);
 
@@ -635,7 +435,6 @@ mod tests {
         let resp = api.get_session();
         assert!(resp.success);
         let data = resp.data.unwrap();
-        // System message + user message
         assert_eq!(data["message_count"], 2);
         let messages = data.get("messages").unwrap().as_array().unwrap();
         assert_eq!(messages.len(), 2);
@@ -675,7 +474,6 @@ mod tests {
         let resp = api.select_model(SelectModelRequest {
             model_id: "test-model".into(),
         });
-        // Should succeed because available_models is empty (allows unknown)
         assert!(resp.success);
         assert_eq!(
             api.agent.config.selected_model.as_deref(),
@@ -688,7 +486,7 @@ mod tests {
         let api = BimoApi::new();
         let session = &api.agent.session;
         assert_eq!(session.message_count(), 1);
-        assert_eq!(session.messages[0].role, crate::session::Role::System);
+        assert_eq!(session.messages[0].role, Role::System);
         assert!(session.messages[0].content.contains("Bimo"));
         assert!(session.messages[0].content.contains("read_file"));
         assert!(session.messages[0].content.contains("write_file"));
@@ -708,10 +506,8 @@ mod tests {
         assert!(data.get("max_context_tokens").is_some());
         assert!(data.get("remaining_tokens").is_some());
         assert!(data.get("usage_percentage").is_some());
-        // System message + user message
         let messages = data["messages"].as_array().unwrap();
         assert_eq!(messages.len(), 2);
-        // First message should be system
         assert_eq!(messages[0]["role"], "system");
         assert_eq!(messages[1]["role"], "user");
     }
@@ -736,7 +532,6 @@ mod tests {
         assert!(resp.success);
         let data = resp.data.unwrap();
         assert_eq!(data["enabled"], false);
-        // budget_tokens and reasoning_effort are None (skipped in serialization)
         assert!(data.get("budget_tokens").is_none() || data["budget_tokens"].is_null());
         assert!(data.get("reasoning_effort").is_none() || data["reasoning_effort"].is_null());
     }
@@ -755,7 +550,6 @@ mod tests {
 
     #[test]
     fn estimate_tokens_basic() {
-        // ~4 chars per token
         assert_eq!(estimate_tokens(""), 0);
         assert_eq!(estimate_tokens("ab"), 1);
         assert_eq!(estimate_tokens("abcdefgh"), 2);
@@ -776,9 +570,7 @@ mod tests {
             1_000_000
         );
         assert_eq!(estimate_max_context(&Some("llama3".into())), 128_000);
-        // Unknown model defaults to 128k
         assert_eq!(estimate_max_context(&Some("mystery-model".into())), 128_000);
-        // No model selected
         assert_eq!(estimate_max_context(&None), 128_000);
     }
 }
