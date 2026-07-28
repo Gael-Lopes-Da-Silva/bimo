@@ -63,3 +63,49 @@ impl From<&BimoError> for ApiErrorPayload {
 
 /// Convenience alias used throughout the crate.
 pub type Result<T> = std::result::Result<T, BimoError>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn error_codes_match_variants() {
+        let cases: Vec<(BimoError, &str)> = vec![
+            (BimoError::Config("x".into()), "CONFIG_ERROR"),
+            (BimoError::Provider("x".into()), "PROVIDER_ERROR"),
+            (BimoError::Model("x".into()), "MODEL_ERROR"),
+            (BimoError::Session("x".into()), "SESSION_ERROR"),
+            (BimoError::Network("x".into()), "NETWORK_ERROR"),
+            (BimoError::Command("x".into()), "COMMAND_ERROR"),
+            (BimoError::Api("x".into()), "API_ERROR"),
+            (BimoError::Serialization("x".into()), "SERIALIZATION_ERROR"),
+            (BimoError::NotImplemented("x".into()), "NOT_IMPLEMENTED"),
+        ];
+        for (err, expected_code) in cases {
+            let payload = ApiErrorPayload::from(&err);
+            assert_eq!(payload.code, expected_code, "mismatch for {err}");
+            assert_eq!(payload.message, err.to_string());
+        }
+    }
+
+    #[test]
+    fn error_display_format() {
+        let err = BimoError::Provider("timeout".into());
+        assert_eq!(err.to_string(), "provider: timeout");
+    }
+
+    #[test]
+    fn error_is_clone() {
+        let err = BimoError::Model("test".into());
+        let cloned = err.clone();
+        assert_eq!(format!("{err}"), format!("{cloned}"));
+    }
+
+    #[test]
+    fn error_is_serialize_deserialize() {
+        let err = BimoError::Command("bad input".into());
+        let json = serde_json::to_string(&err).unwrap();
+        let deserialized: BimoError = serde_json::from_str(&json).unwrap();
+        assert_eq!(format!("{err}"), format!("{deserialized}"));
+    }
+}

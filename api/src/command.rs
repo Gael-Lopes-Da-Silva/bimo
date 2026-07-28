@@ -3,6 +3,7 @@ use crate::session::SessionInfo;
 use crate::tools::Tool;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use tracing;
 
 // ---------------------------------------------------------------------------
 // Command result — what a command returns to the caller
@@ -125,6 +126,12 @@ pub struct CommandRegistry {
     async_commands: HashMap<String, Box<dyn AsyncSlashCommand>>,
 }
 
+impl Default for CommandRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CommandRegistry {
     pub fn new() -> Self {
         let mut reg = Self {
@@ -164,14 +171,22 @@ impl CommandRegistry {
         let cmd_name = parts[0];
         let args = parts.get(1).copied().unwrap_or("");
 
+        tracing::debug!(command = cmd_name, args, "dispatching sync command");
+
         if let Some(cmd) = self.commands.get(cmd_name) {
-            return cmd.execute(ctx, args);
+            let result = cmd.execute(ctx, args);
+            match &result {
+                Ok(r) => tracing::debug!(command = cmd_name, output_len = r.output.len(), "sync command executed"),
+                Err(e) => tracing::warn!(command = cmd_name, error = %e, "sync command failed"),
+            }
+            return result;
         }
         if self.async_commands.contains_key(cmd_name) {
             return Err(BimoError::Command(format!(
                 "command '/{cmd_name}' requires async dispatch"
             )));
         }
+        tracing::warn!(command = cmd_name, "unknown command");
         Err(BimoError::Command(format!(
             "unknown command '/{cmd_name}'. Type /help to see available commands."
         )))
@@ -192,12 +207,25 @@ impl CommandRegistry {
         let cmd_name = parts[0];
         let args = parts.get(1).copied().unwrap_or("");
 
+        tracing::debug!(command = cmd_name, args, "dispatching async command");
+
         if let Some(cmd) = self.commands.get(cmd_name) {
-            return cmd.execute(ctx, args);
+            let result = cmd.execute(ctx, args);
+            match &result {
+                Ok(r) => tracing::debug!(command = cmd_name, output_len = r.output.len(), "command executed"),
+                Err(e) => tracing::warn!(command = cmd_name, error = %e, "command failed"),
+            }
+            return result;
         }
         if let Some(cmd) = self.async_commands.get(cmd_name) {
-            return cmd.execute(ctx, args).await;
+            let result = cmd.execute(ctx, args).await;
+            match &result {
+                Ok(r) => tracing::debug!(command = cmd_name, output_len = r.output.len(), "async command executed"),
+                Err(e) => tracing::warn!(command = cmd_name, error = %e, "async command failed"),
+            }
+            return result;
         }
+        tracing::warn!(command = cmd_name, "unknown command");
         Err(BimoError::Command(format!(
             "unknown command '/{cmd_name}'. Type /help to see available commands."
         )))
@@ -985,5 +1013,310 @@ impl AsyncSlashCommand for CompactCommand {
                 data: Some(serde_json::json!({ "status": "compacting" })),
             })
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::ModelInfo;
+    use crate::tools::{Tool, ToolParameter};
+
+    fn make_context() -> CommandContext {
+        CommandContext {
+            selected_provider: Some("openai".into()),
+            selected_model: Some("gpt-4".into()),
+            available_models: vec![ModelInfo {
+                id: "gpt-4".into(),
+                name: "GPT-4".into(),
+                provider_id: "openai".into(),
+            }],
+            session_id: "test-session-id".into(),
+            session_message_count: 5,
+            session_messages: vec![],
+            provider_ids: vec!["openai".into(), "anthropic".into(), "ollama".into()],
+            provider_names: vec!["OpenAI".into(), "Anthropic".into(), "Ollama".into()],
+            needs_configuration: false,
+            tools: vec![Tool {
+                name: "read_file".into(),
+                description: "Read a file".into(),
+                parameters: vec![ToolParameter {
+                    name: "path".into(),
+                    description: "file path".into(),
+                    required: true,
+                    parameter_type: "string".into(),
+                }],
+            }],
+            saved_sessions: vec![],
+            compact_requested: false,
+            has_runtime: true,
+            tree_fork_index: None,
+            tree_revert_index: None,
+        }
+    }
+
+    #[test]
+    fn registry_has_all_builtin_commands() {
+        let reg = CommandRegistry::new();
+        let names: Vec<&str> = reg.list().iter().map(|(n, _)| *n).collect();
+        assert!(names.contains(&"help"));
+        assert!(names.contains(&"status"));
+        assert!(names.contains(&"clear"));
+        assert!(names.contains(&"model"));
+        assert!(names.contains(&"provider"));
+        assert!(names.contains(&"tools"));
+        assert!(names.contains(&"session"));
+        assert!(names.contains(&"tree"));
+        assert!(names.contains(&"compact"));
+    }
+
+    #[test]
+    fn dispatch_help() {
+        let reg = CommandRegistry::new();
+        let mut ctx = make_context();
+        let result = reg.dispatch("/help", &mut ctx).unwrap();
+        assert_eq!(result.command, "help");
+        assert!(result.output.contains("/help"));
+        assert!(result.output.contains("/status"));
+    }
+
+    #[test]
+    fn dispatch_status() {
+        let reg = CommandRegistry::new();
+        let mut ctx = make_context();
+        let result = reg.dispatch("/status", &mut ctx).unwrap();
+        assert_eq!(result.command, "status");
+        assert!(result.output.contains("openai"));
+        assert!(result.output.contains("gpt-4"));
+        assert!(result.data.is_some());
+    }
+
+    #[test]
+    fn dispatch_clear() {
+        let reg = CommandRegistry::new();
+        let mut ctx = make_context();
+        let result = reg.dispatch("/clear", &mut ctx).unwrap();
+        assert_eq!(result.command, "clear");
+        assert!(result.output.contains("cleared"));
+    }
+
+    #[test]
+    fn dispatch_model_list() {
+        let reg = CommandRegistry::new();
+        let mut ctx = make_context();
+        let result = reg.dispatch("/model", &mut ctx).unwrap();
+        assert_eq!(result.command, "model");
+        assert!(result.output.contains("gpt-4"));
+    }
+
+    #[test]
+    fn dispatch_model_select() {
+        let reg = CommandRegistry::new();
+        let mut ctx = make_context();
+        let _result = reg.dispatch("/model select gpt-4", &mut ctx).unwrap();
+        assert_eq!(ctx.selected_model.as_deref(), Some("gpt-4"));
+    }
+
+    #[test]
+    fn dispatch_model_select_unknown() {
+        let reg = CommandRegistry::new();
+        let mut ctx = make_context();
+        let result = reg.dispatch("/model select unknown", &mut ctx);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn dispatch_provider_list() {
+        let reg = CommandRegistry::new();
+        let mut ctx = make_context();
+        let result = reg.dispatch("/provider", &mut ctx).unwrap();
+        assert_eq!(result.command, "provider");
+        assert!(result.output.contains("openai"));
+        assert!(result.output.contains("anthropic"));
+    }
+
+    #[test]
+    fn dispatch_provider_select() {
+        let reg = CommandRegistry::new();
+        let mut ctx = make_context();
+        let _result = reg.dispatch("/provider select anthropic", &mut ctx).unwrap();
+        assert_eq!(ctx.selected_provider.as_deref(), Some("anthropic"));
+    }
+
+    #[test]
+    fn dispatch_provider_select_unknown() {
+        let reg = CommandRegistry::new();
+        let mut ctx = make_context();
+        let result = reg.dispatch("/provider select nonexistent", &mut ctx);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn dispatch_tools() {
+        let reg = CommandRegistry::new();
+        let mut ctx = make_context();
+        let result = reg.dispatch("/tools", &mut ctx).unwrap();
+        assert_eq!(result.command, "tools");
+        assert!(result.output.contains("read_file"));
+        assert!(result.data.is_some());
+    }
+
+    #[test]
+    fn dispatch_unknown_command() {
+        let reg = CommandRegistry::new();
+        let mut ctx = make_context();
+        let result = reg.dispatch("/nonexistent", &mut ctx);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn dispatch_not_slash_command() {
+        let reg = CommandRegistry::new();
+        let mut ctx = make_context();
+        let result = reg.dispatch("help", &mut ctx);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn dispatch_async_requires_async() {
+        let reg = CommandRegistry::new();
+        let mut ctx = make_context();
+        let result = reg.dispatch("/compact", &mut ctx);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("requires async dispatch"));
+    }
+
+    #[test]
+    fn list_detailed_includes_metadata() {
+        let reg = CommandRegistry::new();
+        let detailed = reg.list_detailed();
+        assert!(!detailed.is_empty());
+
+        let help = detailed.iter().find(|c| c.name == "help").unwrap();
+        assert!(!help.async_command);
+        assert!(help.subcommands.is_empty());
+
+        let compact = detailed.iter().find(|c| c.name == "compact").unwrap();
+        assert!(compact.async_command);
+
+        let model = detailed.iter().find(|c| c.name == "model").unwrap();
+        assert!(!model.subcommands.is_empty());
+    }
+
+    #[test]
+    fn session_command_list() {
+        let reg = CommandRegistry::new();
+        let mut ctx = make_context();
+        let result = reg.dispatch("/session list", &mut ctx).unwrap();
+        assert_eq!(result.command, "session");
+        assert!(result.output.contains("No saved sessions"));
+    }
+
+    #[test]
+    fn session_command_info() {
+        let reg = CommandRegistry::new();
+        let mut ctx = make_context();
+        let result = reg.dispatch("/session info", &mut ctx).unwrap();
+        assert!(result.output.contains("test-session-id"));
+        assert!(result.output.contains("5"));
+    }
+
+    #[test]
+    fn tree_command_empty_session() {
+        let reg = CommandRegistry::new();
+        let mut ctx = make_context();
+        ctx.session_messages = vec![];
+        let result = reg.dispatch("/tree", &mut ctx).unwrap();
+        assert!(result.output.contains("empty"));
+    }
+
+    #[test]
+    fn tree_command_with_messages() {
+        use crate::session::{Message, Role};
+        use chrono::Utc;
+
+        let reg = CommandRegistry::new();
+        let mut ctx = make_context();
+        ctx.session_messages = vec![
+            Message {
+                role: Role::User,
+                content: "hello".into(),
+                timestamp: Utc::now(),
+            },
+            Message {
+                role: Role::Assistant,
+                content: "hi there".into(),
+                timestamp: Utc::now(),
+            },
+        ];
+        let result = reg.dispatch("/tree", &mut ctx).unwrap();
+        assert!(result.output.contains("2 messages"));
+        assert!(result.output.contains("user"));
+        assert!(result.output.contains("asst"));
+    }
+
+    #[test]
+    fn tree_fork_sets_index() {
+        use crate::session::{Message, Role};
+        use chrono::Utc;
+
+        let reg = CommandRegistry::new();
+        let mut ctx = make_context();
+        ctx.session_messages = vec![
+            Message {
+                role: Role::User,
+                content: "a".into(),
+                timestamp: Utc::now(),
+            },
+            Message {
+                role: Role::Assistant,
+                content: "b".into(),
+                timestamp: Utc::now(),
+            },
+        ];
+        let _result = reg.dispatch("/tree fork 0", &mut ctx).unwrap();
+        assert_eq!(ctx.tree_fork_index, Some(0));
+    }
+
+    #[test]
+    fn tree_revert_sets_index() {
+        use crate::session::{Message, Role};
+        use chrono::Utc;
+
+        let reg = CommandRegistry::new();
+        let mut ctx = make_context();
+        ctx.session_messages = vec![
+            Message {
+                role: Role::User,
+                content: "a".into(),
+                timestamp: Utc::now(),
+            },
+            Message {
+                role: Role::Assistant,
+                content: "b".into(),
+                timestamp: Utc::now(),
+            },
+        ];
+        let _result = reg.dispatch("/tree revert 0", &mut ctx).unwrap();
+        assert_eq!(ctx.tree_revert_index, Some(0));
+    }
+
+    #[test]
+    fn tree_fork_out_of_range() {
+        use crate::session::{Message, Role};
+        use chrono::Utc;
+
+        let reg = CommandRegistry::new();
+        let mut ctx = make_context();
+        ctx.session_messages = vec![Message {
+            role: Role::User,
+            content: "a".into(),
+            timestamp: Utc::now(),
+        }];
+        let result = reg.dispatch("/tree fork 5", &mut ctx);
+        assert!(result.is_err());
     }
 }

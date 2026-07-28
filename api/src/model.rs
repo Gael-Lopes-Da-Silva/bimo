@@ -20,7 +20,7 @@ pub async fn fetch_models_for_provider(
         .into_iter()
         .map(|rm| ModelInfo {
             id: rm.id.clone(),
-            name: rm.name.unwrap_or_else(|| rm.id),
+            name: rm.name.unwrap_or(rm.id),
             provider_id: runtime.id.clone(),
         })
         .collect();

@@ -22,6 +22,12 @@ pub struct ToolRegistry {
     tools: Vec<Tool>,
 }
 
+impl Default for ToolRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ToolRegistry {
     pub fn new() -> Self {
         let mut reg = Self { tools: Vec::new() };
@@ -137,5 +143,80 @@ impl ToolRegistry {
 
     pub fn get(&self, name: &str) -> Option<&Tool> {
         self.tools.iter().find(|t| t.name == name)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn builtin_tools_registered() {
+        let reg = ToolRegistry::new();
+        assert_eq!(reg.tools.len(), 6);
+    }
+
+    #[test]
+    fn builtin_tool_names() {
+        let reg = ToolRegistry::new();
+        let names: Vec<&str> = reg.tools.iter().map(|t| t.name.as_str()).collect();
+        assert!(names.contains(&"read_file"));
+        assert!(names.contains(&"write_file"));
+        assert!(names.contains(&"list_files"));
+        assert!(names.contains(&"run_command"));
+        assert!(names.contains(&"search_files"));
+        assert!(names.contains(&"search_content"));
+    }
+
+    #[test]
+    fn get_tool_by_name() {
+        let reg = ToolRegistry::new();
+        assert!(reg.get("read_file").is_some());
+        assert!(reg.get("nonexistent").is_none());
+    }
+
+    #[test]
+    fn read_file_has_required_path() {
+        let reg = ToolRegistry::new();
+        let tool = reg.get("read_file").unwrap();
+        assert_eq!(tool.parameters.len(), 1);
+        assert_eq!(tool.parameters[0].name, "path");
+        assert!(tool.parameters[0].required);
+    }
+
+    #[test]
+    fn write_file_has_two_required_params() {
+        let reg = ToolRegistry::new();
+        let tool = reg.get("write_file").unwrap();
+        assert_eq!(tool.parameters.len(), 2);
+        assert!(tool.parameters.iter().all(|p| p.required));
+    }
+
+    #[test]
+    fn list_files_has_optional_path() {
+        let reg = ToolRegistry::new();
+        let tool = reg.get("list_files").unwrap();
+        assert_eq!(tool.parameters.len(), 1);
+        assert!(!tool.parameters[0].required);
+    }
+
+    #[test]
+    fn register_custom_tool() {
+        let mut reg = ToolRegistry::new();
+        reg.register(Tool {
+            name: "custom".into(),
+            description: "a custom tool".into(),
+            parameters: vec![],
+        });
+        assert!(reg.get("custom").is_some());
+        assert_eq!(reg.tools.len(), 7);
+    }
+
+    #[test]
+    fn tools_are_serializable() {
+        let reg = ToolRegistry::new();
+        let json = serde_json::to_string(&reg.tools).unwrap();
+        let deserialized: Vec<Tool> = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.len(), reg.tools.len());
     }
 }

@@ -2,6 +2,7 @@ use crate::config::{AppConfig, CustomProviderConfig};
 use crate::error::{BimoError, Result};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use tracing;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -96,6 +97,12 @@ pub fn builtin_providers() -> Vec<ProviderInfo> {
 
 pub struct ProviderRegistry {
     builtins: Vec<ProviderInfo>,
+}
+
+impl Default for ProviderRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ProviderRegistry {
@@ -193,13 +200,10 @@ impl ProviderRegistry {
                 _ => return Err(BimoError::Provider("unsupported builtin".into())),
             };
 
-        let api_key = api_key.or_else(|| {
-            let env = match info.id.as_str() {
-                "openai" => std::env::var("OPENAI_API_KEY").ok(),
-                "anthropic" => std::env::var("ANTHROPIC_API_KEY").ok(),
-                _ => None,
-            };
-            env
+        let api_key = api_key.or_else(|| match info.id.as_str() {
+            "openai" => std::env::var("OPENAI_API_KEY").ok(),
+            "anthropic" => std::env::var("ANTHROPIC_API_KEY").ok(),
+            _ => None,
         });
 
         Ok(ProviderRuntime {
@@ -258,34 +262,43 @@ pub struct RawModel {
 pub async fn fetch_models(runtime: &ProviderRuntime) -> Result<Vec<RawModel>> {
     let endpoint = match &runtime.models_endpoint {
         Some(ep) => ep,
-        None => return Ok(Vec::new()), // provider doesn't expose a models list
+        None => {
+            tracing::debug!(provider = %runtime.id, "no models endpoint, skipping fetch");
+            return Ok(Vec::new());
+        }
     };
 
     let client = Client::new();
     let url = format!("{}{}", runtime.base_url.trim_end_matches('/'), endpoint);
+    tracing::debug!(provider = %runtime.id, url = %url, "fetching models");
     let mut req = client.get(&url);
 
     req = apply_auth(req, runtime)?;
 
     let resp = req.send().await.map_err(|e| {
+        tracing::error!(provider = %runtime.id, error = %e, "model fetch request failed");
         BimoError::Network(format!("failed to fetch models from {}: {e}", runtime.id))
     })?;
 
-    if !resp.status().is_success() {
-        let status = resp.status();
+    let status = resp.status();
+    if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
+        tracing::error!(provider = %runtime.id, status = %status, "model fetch failed");
         return Err(BimoError::Network(format!(
             "model fetch failed ({}): {}",
             status, body
         )));
     }
 
+    tracing::debug!(provider = %runtime.id, "model fetch response received, parsing");
     let raw: serde_json::Value = resp
         .json()
         .await
         .map_err(|e| BimoError::Serialization(format!("failed to parse model list: {e}")))?;
 
-    parse_models_response(runtime, &raw)
+    let models = parse_models_response(runtime, &raw)?;
+    tracing::info!(provider = %runtime.id, count = models.len(), "models fetched");
+    Ok(models)
 }
 
 fn parse_models_response(
@@ -338,10 +351,10 @@ fn apply_auth(
         if let Some(key) = &runtime.api_key {
             req = req.header(header.as_str(), format!("{prefix}{key}"));
         }
-    } else if let Some(header) = &runtime.auth_header {
-        if let Some(key) = &runtime.api_key {
-            req = req.header(header.as_str(), key.as_str());
-        }
+    } else if let Some(header) = &runtime.auth_header
+        && let Some(key) = &runtime.api_key
+    {
+        req = req.header(header.as_str(), key.as_str());
     }
     Ok(req)
 }
@@ -383,6 +396,7 @@ pub async fn chat_completion(
         runtime.chat_endpoint
     );
 
+    tracing::debug!(provider = %runtime.id, model, url = %url, message_count = messages.len(), "sending chat completion request");
     let body = build_request_body(runtime, messages, model)?;
 
     let mut req = client.post(&url).json(&body);
@@ -391,23 +405,35 @@ pub async fn chat_completion(
     let resp = req
         .send()
         .await
-        .map_err(|e| BimoError::Network(format!("chat request to {} failed: {e}", runtime.id)))?;
+        .map_err(|e| {
+            tracing::error!(provider = %runtime.id, error = %e, "chat completion request failed");
+            BimoError::Network(format!("chat request to {} failed: {e}", runtime.id))
+        })?;
 
-    if !resp.status().is_success() {
-        let status = resp.status();
+    let status = resp.status();
+    if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
+        tracing::error!(provider = %runtime.id, status = %status, body = %body, "chat completion failed");
         return Err(BimoError::Provider(format!(
             "chat completion failed ({}): {}",
             status, body
         )));
     }
 
+    tracing::debug!(provider = %runtime.id, "chat completion response received, parsing");
     let raw: serde_json::Value = resp
         .json()
         .await
         .map_err(|e| BimoError::Serialization(format!("failed to parse chat response: {e}")))?;
 
-    parse_chat_response(runtime, &raw)
+    let result = parse_chat_response(runtime, &raw)?;
+    tracing::info!(
+        provider = %runtime.id,
+        model = ?result.model,
+        content_len = result.content.len(),
+        "chat completion done"
+    );
+    Ok(result)
 }
 
 fn build_request_body(
@@ -525,4 +551,307 @@ fn parse_chat_response(
         "unable to parse chat response: {}",
         serde_json::to_string(raw).unwrap_or_default()
     )))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn builtin_providers_count() {
+        let providers = builtin_providers();
+        assert_eq!(providers.len(), 3);
+    }
+
+    #[test]
+    fn builtin_provider_ids() {
+        let providers = builtin_providers();
+        let ids: Vec<&str> = providers.iter().map(|p| p.id.as_str()).collect();
+        assert!(ids.contains(&"openai"));
+        assert!(ids.contains(&"anthropic"));
+        assert!(ids.contains(&"ollama"));
+    }
+
+    #[test]
+    fn openai_provider_metadata() {
+        let providers = builtin_providers();
+        let openai = providers.iter().find(|p| p.id == "openai").unwrap();
+        assert_eq!(openai.category, ProviderCategory::Cloud);
+        assert!(openai.requires_api_key);
+        assert!(openai.builtin);
+        assert_eq!(openai.default_base_url, "https://api.openai.com/v1");
+    }
+
+    #[test]
+    fn ollama_provider_no_api_key() {
+        let providers = builtin_providers();
+        let ollama = providers.iter().find(|p| p.id == "ollama").unwrap();
+        assert_eq!(ollama.category, ProviderCategory::Local);
+        assert!(!ollama.requires_api_key);
+    }
+
+    #[test]
+    fn anthropic_requires_api_key() {
+        let providers = builtin_providers();
+        let anthropic = providers.iter().find(|p| p.id == "anthropic").unwrap();
+        assert!(anthropic.requires_api_key);
+    }
+
+    #[test]
+    fn registry_list_includes_custom() {
+        let reg = ProviderRegistry::new();
+        let mut config = AppConfig::default();
+        config.custom_providers.push(CustomProviderConfig {
+            id: "custom-1".into(),
+            name: "Custom One".into(),
+            category: "cloud".into(),
+            base_url: "https://custom.api".into(),
+            api_key_required: false,
+            chat_endpoint: "/chat".into(),
+            models_endpoint: None,
+            auth_header: None,
+            auth_prefix: None,
+        });
+
+        let all = reg.list_all(&config);
+        assert_eq!(all.len(), 4); // 3 builtins + 1 custom
+        assert!(all.iter().any(|p| p.id == "custom-1" && !p.builtin));
+    }
+
+    #[test]
+    fn resolve_runtime_unknown_provider() {
+        let reg = ProviderRegistry::new();
+        let config = AppConfig::default();
+        let result = reg.resolve_runtime("nonexistent", &config);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_openai_models_response() {
+        let runtime = ProviderRuntime {
+            id: "openai".into(),
+            base_url: "https://api.openai.com/v1".into(),
+            api_key: None,
+            chat_endpoint: "/chat/completions".into(),
+            models_endpoint: Some("/models".into()),
+            auth_header: Some("Authorization".into()),
+            auth_prefix: Some("Bearer ".into()),
+            request_body_format: RequestBodyFormat::OpenAi,
+        };
+
+        let raw = serde_json::json!({
+            "data": [
+                { "id": "gpt-4", "name": "GPT-4" },
+                { "id": "gpt-3.5-turbo", "name": "GPT-3.5 Turbo" }
+            ]
+        });
+
+        let models = parse_models_response(&runtime, &raw).unwrap();
+        assert_eq!(models.len(), 2);
+        assert_eq!(models[0].id, "gpt-4");
+        assert_eq!(models[0].name.as_deref(), Some("GPT-4"));
+    }
+
+    #[test]
+    fn parse_ollama_models_response() {
+        let runtime = ProviderRuntime {
+            id: "ollama".into(),
+            base_url: "http://localhost:11434".into(),
+            api_key: None,
+            chat_endpoint: "/api/chat".into(),
+            models_endpoint: Some("/api/tags".into()),
+            auth_header: None,
+            auth_prefix: None,
+            request_body_format: RequestBodyFormat::Ollama,
+        };
+
+        let raw = serde_json::json!({
+            "models": [
+                { "name": "llama3" },
+                { "name": "codellama" }
+            ]
+        });
+
+        let models = parse_models_response(&runtime, &raw).unwrap();
+        assert_eq!(models.len(), 2);
+        assert_eq!(models[0].id, "llama3");
+    }
+
+    #[test]
+    fn parse_openai_chat_response() {
+        let runtime = ProviderRuntime {
+            id: "openai".into(),
+            base_url: "".into(),
+            api_key: None,
+            chat_endpoint: "".into(),
+            models_endpoint: None,
+            auth_header: None,
+            auth_prefix: None,
+            request_body_format: RequestBodyFormat::OpenAi,
+        };
+
+        let raw = serde_json::json!({
+            "choices": [{
+                "message": { "content": "Hello!" }
+            }],
+            "model": "gpt-4",
+            "usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": 5,
+                "total_tokens": 15
+            }
+        });
+
+        let resp = parse_chat_response(&runtime, &raw).unwrap();
+        assert_eq!(resp.content, "Hello!");
+        assert_eq!(resp.model.as_deref(), Some("gpt-4"));
+        assert!(resp.usage.is_some());
+        assert_eq!(resp.usage.unwrap().total_tokens, 15);
+    }
+
+    #[test]
+    fn parse_anthropic_chat_response() {
+        let runtime = ProviderRuntime {
+            id: "anthropic".into(),
+            base_url: "".into(),
+            api_key: None,
+            chat_endpoint: "".into(),
+            models_endpoint: None,
+            auth_header: None,
+            auth_prefix: None,
+            request_body_format: RequestBodyFormat::Anthropic,
+        };
+
+        let raw = serde_json::json!({
+            "content": [{ "text": "Hi there!" }],
+            "model": "claude-3",
+            "usage": {
+                "input_tokens": 8,
+                "output_tokens": 3
+            }
+        });
+
+        let resp = parse_chat_response(&runtime, &raw).unwrap();
+        assert_eq!(resp.content, "Hi there!");
+        assert_eq!(resp.model.as_deref(), Some("claude-3"));
+        let usage = resp.usage.unwrap();
+        assert_eq!(usage.prompt_tokens, 8);
+        assert_eq!(usage.completion_tokens, 3);
+        assert_eq!(usage.total_tokens, 11);
+    }
+
+    #[test]
+    fn parse_ollama_chat_response() {
+        let runtime = ProviderRuntime {
+            id: "ollama".into(),
+            base_url: "".into(),
+            api_key: None,
+            chat_endpoint: "".into(),
+            models_endpoint: None,
+            auth_header: None,
+            auth_prefix: None,
+            request_body_format: RequestBodyFormat::Ollama,
+        };
+
+        let raw = serde_json::json!({
+            "message": { "content": "Ollama says hi" },
+            "model": "llama3"
+        });
+
+        let resp = parse_chat_response(&runtime, &raw).unwrap();
+        assert_eq!(resp.content, "Ollama says hi");
+        assert_eq!(resp.model.as_deref(), Some("llama3"));
+        assert!(resp.usage.is_none());
+    }
+
+    #[test]
+    fn parse_chat_response_unknown_format() {
+        let runtime = ProviderRuntime {
+            id: "test".into(),
+            base_url: "".into(),
+            api_key: None,
+            chat_endpoint: "".into(),
+            models_endpoint: None,
+            auth_header: None,
+            auth_prefix: None,
+            request_body_format: RequestBodyFormat::OpenAi,
+        };
+
+        let raw = serde_json::json!({ "unknown": "format" });
+        let result = parse_chat_response(&runtime, &raw);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn build_openai_request_body() {
+        let runtime = ProviderRuntime {
+            id: "openai".into(),
+            base_url: "".into(),
+            api_key: None,
+            chat_endpoint: "".into(),
+            models_endpoint: None,
+            auth_header: None,
+            auth_prefix: None,
+            request_body_format: RequestBodyFormat::OpenAi,
+        };
+
+        let messages = vec![
+            ChatMessage {
+                role: "user".into(),
+                content: "hello".into(),
+            },
+        ];
+
+        let body = build_request_body(&runtime, &messages, "gpt-4").unwrap();
+        assert_eq!(body["model"], "gpt-4");
+        assert!(body["messages"].is_array());
+        assert_eq!(body["messages"][0]["role"], "user");
+    }
+
+    #[test]
+    fn build_ollama_request_body_has_stream_false() {
+        let runtime = ProviderRuntime {
+            id: "ollama".into(),
+            base_url: "".into(),
+            api_key: None,
+            chat_endpoint: "".into(),
+            models_endpoint: None,
+            auth_header: None,
+            auth_prefix: None,
+            request_body_format: RequestBodyFormat::Ollama,
+        };
+
+        let messages = vec![];
+        let body = build_request_body(&runtime, &messages, "llama3").unwrap();
+        assert_eq!(body["stream"], false);
+    }
+
+    #[test]
+    fn provider_category_display() {
+        assert_eq!(ProviderCategory::Local.to_string(), "local");
+        assert_eq!(ProviderCategory::Cloud.to_string(), "cloud");
+    }
+
+    #[test]
+    fn raw_model_is_serializable() {
+        let model = RawModel {
+            id: "gpt-4".into(),
+            name: Some("GPT-4".into()),
+        };
+        let json = serde_json::to_string(&model).unwrap();
+        let deserialized: RawModel = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.id, "gpt-4");
+    }
+
+    #[test]
+    fn usage_info_is_serializable() {
+        let usage = UsageInfo {
+            prompt_tokens: 10,
+            completion_tokens: 20,
+            total_tokens: 30,
+        };
+        let json = serde_json::to_string(&usage).unwrap();
+        let deserialized: UsageInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.total_tokens, 30);
+    }
 }

@@ -5,6 +5,7 @@ use crate::model::{self, ModelInfo};
 use crate::provider::{self, ProviderInfo, ProviderRegistry, ProviderRuntime, UsageInfo};
 use crate::session::Session;
 use crate::tools::ToolRegistry;
+use tracing;
 
 /// The response from a chat interaction.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -26,14 +27,28 @@ pub struct Agent {
     pub tool_registry: ToolRegistry,
 }
 
+impl Default for Agent {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Agent {
     /// Create a new agent with no provider selected.
     pub fn new() -> Self {
+        tracing::info!("creating new Agent");
         let config = AppConfig::load();
         let provider_registry = ProviderRegistry::new();
         let command_registry = CommandRegistry::new();
         let tool_registry = ToolRegistry::new();
         let session = Session::new();
+
+        tracing::debug!(
+            session_id = %session.id,
+            selected_provider = ?config.selected_provider,
+            selected_model = ?config.selected_model,
+            "agent state loaded"
+        );
 
         let mut agent = Self {
             config,
@@ -46,8 +61,15 @@ impl Agent {
         };
 
         if let Some(pid) = agent.config.selected_provider.clone() {
-            if let Ok(rt) = agent.provider_registry.resolve_runtime(&pid, &agent.config) {
-                agent.runtime = Some(rt);
+            tracing::info!(provider_id = %pid, "resolving provider runtime");
+            match agent.provider_registry.resolve_runtime(&pid, &agent.config) {
+                Ok(rt) => {
+                    tracing::info!(provider_id = %pid, "provider runtime resolved");
+                    agent.runtime = Some(rt);
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, provider_id = %pid, "failed to resolve provider runtime");
+                }
             }
         }
 
@@ -68,6 +90,7 @@ impl Agent {
     }
 
     pub async fn select_provider(&mut self, provider_id: &str) -> Result<ProviderInfo> {
+        tracing::info!(provider_id, "select_provider called");
         let info = self
             .provider_registry
             .list_all(&self.config)
@@ -85,7 +108,9 @@ impl Agent {
         self.config.selected_model = None;
         self.config.save()?;
 
+        tracing::debug!(provider_id, "fetching models");
         self.fetch_models().await?;
+        tracing::info!(provider_id, model_count = self.available_models.len(), "select_provider done");
 
         Ok(info)
     }
@@ -96,6 +121,7 @@ impl Agent {
         base_url: Option<String>,
         api_key: Option<String>,
     ) -> Result<()> {
+        tracing::info!(provider_id, "configure_provider called");
         let default_base_url = self
             .provider_registry
             .list_all(&self.config)
@@ -113,37 +139,43 @@ impl Agent {
             });
 
         if let Some(url) = base_url {
+            tracing::debug!(base_url = %url, "setting base_url");
             entry.base_url = url;
         }
         if let Some(key) = api_key {
+            tracing::debug!("setting api_key");
             entry.api_key = Some(key);
         }
 
-        if entry.base_url.is_empty() {
-            if let Some(url) = default_base_url {
-                entry.base_url = url;
-            }
+        if entry.base_url.is_empty()
+            && let Some(url) = default_base_url
+        {
+            entry.base_url = url;
         }
 
         self.config.save()?;
 
         if self.config.selected_provider.as_deref() == Some(provider_id) {
+            tracing::debug!(provider_id, "rebuilding runtime for currently selected provider");
             self.runtime = Some(
                 self.provider_registry
                     .resolve_runtime(provider_id, &self.config)?,
             );
         }
 
+        tracing::info!(provider_id, "configure_provider done");
         Ok(())
     }
 
     pub fn add_custom_provider(&mut self, cp: CustomProviderConfig) -> Result<()> {
+        tracing::info!(id = %cp.id, name = %cp.name, "add_custom_provider called");
         if self
             .provider_registry
             .list_all(&self.config)
             .iter()
             .any(|p| p.id == cp.id)
         {
+            tracing::warn!(id = %cp.id, "provider id already exists");
             return Err(BimoError::Provider(format!(
                 "a provider with id '{}' already exists",
                 cp.id
@@ -151,6 +183,7 @@ impl Agent {
         }
         self.config.custom_providers.push(cp);
         self.config.save()?;
+        tracing::info!("add_custom_provider done");
         Ok(())
     }
 
@@ -159,12 +192,14 @@ impl Agent {
     // -----------------------------------------------------------------------
 
     pub async fn fetch_models(&mut self) -> Result<Vec<ModelInfo>> {
+        tracing::debug!("fetch_models called");
         let runtime = self
             .runtime
             .as_ref()
             .ok_or_else(|| BimoError::Provider("no provider selected".into()))?;
 
         let models = model::fetch_models_for_provider(runtime).await?;
+        tracing::info!(provider = %runtime.id, count = models.len(), "fetch_models done");
         self.available_models = models.clone();
         Ok(models)
     }
@@ -174,8 +209,10 @@ impl Agent {
     }
 
     pub fn select_model(&mut self, model_id: &str) -> Result<()> {
+        tracing::info!(model_id, "select_model called");
         let exists = self.available_models.iter().any(|m| m.id == model_id);
         if !exists && !self.available_models.is_empty() {
+            tracing::warn!(model_id, "model not found in available models");
             return Err(BimoError::Model(format!(
                 "model '{model_id}' not found. Available models: {}",
                 self.available_models
@@ -187,6 +224,7 @@ impl Agent {
         }
         self.config.selected_model = Some(model_id.to_string());
         self.config.save()?;
+        tracing::info!(model_id, "select_model done");
         Ok(())
     }
 
@@ -195,6 +233,7 @@ impl Agent {
     // -----------------------------------------------------------------------
 
     pub async fn chat(&mut self, user_message: &str) -> Result<ChatResponse> {
+        tracing::info!(message_len = user_message.len(), "chat called");
         let runtime = self
             .runtime
             .as_ref()
@@ -207,11 +246,17 @@ impl Agent {
             .as_deref()
             .ok_or_else(|| BimoError::Model("no model selected".into()))?;
 
+        tracing::debug!(provider = %runtime.id, model, session_id = %self.session.id, "sending chat completion");
         self.session.add_user_message(user_message);
         let messages = self.session.to_chat_messages();
         let response = provider::chat_completion(&runtime, &messages, model).await?;
         self.session.add_assistant_message(&response.content);
 
+        tracing::info!(
+            model = ?response.model,
+            content_len = response.content.len(),
+            "chat done"
+        );
         Ok(ChatResponse {
             content: response.content,
             model: response.model,
@@ -225,11 +270,13 @@ impl Agent {
     // -----------------------------------------------------------------------
 
     pub async fn execute_command(&mut self, input: &str) -> Result<CommandResult> {
+        tracing::info!(input, "execute_command called");
         let mut ctx = self.build_command_context();
         let result = self.command_registry.dispatch_async(input, &mut ctx).await?;
 
         // Handle special post-command actions
         let command_name = result.command.clone();
+        tracing::debug!(command = %command_name, "post-command processing");
 
         match command_name.as_str() {
             "session" => {
@@ -237,6 +284,7 @@ impl Agent {
             }
             "compact" => {
                 if ctx.compact_requested {
+                    tracing::info!("compacting session via LLM");
                     self.compact_session().await?;
                     return Ok(CommandResult {
                         command: "compact".into(),
@@ -247,6 +295,7 @@ impl Agent {
             }
             "tree" => {
                 if let Some(index) = ctx.tree_fork_index {
+                    tracing::info!(index, "forking session");
                     let forked = self.fork_session(index)?;
                     self.session = forked;
                     return Ok(CommandResult {
@@ -260,6 +309,7 @@ impl Agent {
                     });
                 }
                 if let Some(index) = ctx.tree_revert_index {
+                    tracing::info!(index, "reverting session");
                     self.revert_session(index)?;
                     return Ok(CommandResult {
                         command: "tree".into(),
@@ -276,6 +326,7 @@ impl Agent {
     }
 
     pub fn clear_session(&mut self) {
+        tracing::info!(session_id = %self.session.id, messages = self.session.message_count(), "clearing session");
         self.session.clear();
     }
 
@@ -291,19 +342,22 @@ impl Agent {
 
         // Handle save
         if result.output == "Session saved." {
+            tracing::info!(session_id = %self.session.id, "saving session to disk");
             return self.session.save();
         }
 
         // Handle purge
         if result.output == "All saved sessions purged." {
+            tracing::info!("purging all saved sessions");
             return Session::delete_all_saved();
         }
 
         // Handle delete — extract session_id from data
-        if let Some(id) = data.get("session_id").and_then(|v| v.as_str()) {
-            if result.output.starts_with("Deleted session") {
-                return Session::delete_saved(id);
-            }
+        if let Some(id) = data.get("session_id").and_then(|v| v.as_str())
+            && result.output.starts_with("Deleted session")
+        {
+            tracing::info!(session_id = id, "deleting saved session");
+            return Session::delete_saved(id);
         }
 
         Ok(())
@@ -311,6 +365,7 @@ impl Agent {
 
     /// Compact the session by summarizing it via the provider.
     async fn compact_session(&mut self) -> Result<()> {
+        tracing::info!(message_count = self.session.message_count(), "compact_session called");
         let runtime = self
             .runtime
             .as_ref()
@@ -346,27 +401,31 @@ impl Agent {
             conversation.join("\n\n")
         );
 
+        tracing::debug!(prompt_len = prompt.len(), "sending summarization request");
         let messages = vec![provider::ChatMessage {
             role: "user".into(),
             content: prompt,
         }];
 
         let response = provider::chat_completion(&runtime, &messages, model).await?;
+        tracing::debug!(summary_len = response.content.len(), "compaction summary received");
         self.session.compact(&response.content);
 
         // Save the compacted session
         self.session.save()?;
-
+        tracing::info!("compact_session done");
         Ok(())
     }
 
     /// Save the current session to disk.
     pub fn save_session(&mut self) -> Result<()> {
+        tracing::info!(session_id = %self.session.id, "save_session called");
         self.session.save()
     }
 
     /// Resume a saved session by id (supports prefix matching).
     pub fn resume_session(&mut self, id: &str) -> Result<()> {
+        tracing::info!(id, "resume_session called");
         let sessions = Session::list_saved()?;
         let found = sessions
             .iter()
@@ -374,26 +433,32 @@ impl Agent {
             .ok_or_else(|| BimoError::Session(format!("session '{id}' not found")))?;
 
         let loaded = Session::load(&found.id)?;
+        tracing::info!(loaded_id = %found.id, message_count = loaded.message_count(), "resume_session done");
         self.session = loaded;
         Ok(())
     }
 
     /// Delete a saved session by id.
     pub fn delete_session(&mut self, id: &str) -> Result<()> {
+        tracing::info!(id, "delete_session called");
         Session::delete_saved(id)
     }
 
     /// Fork the current session at the given message index.
     /// Creates a new session with messages 0..=index and switches to it.
     pub fn fork_session(&mut self, index: usize) -> Result<Session> {
+        tracing::info!(index, "fork_session called");
         let forked = self.session.fork(index)?;
+        tracing::info!(new_session_id = %forked.id, "fork_session done");
         Ok(forked)
     }
 
     /// Revert the current session by discarding all messages after the given index.
     /// Saves the truncated session to disk.
     pub fn revert_session(&mut self, index: usize) -> Result<()> {
+        tracing::info!(index, "revert_session called");
         self.session.revert(index)?;
+        tracing::info!(remaining = self.session.message_count(), "revert_session done");
         self.session.save()
     }
 
