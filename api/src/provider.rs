@@ -402,13 +402,10 @@ pub async fn chat_completion(
     let mut req = client.post(&url).json(&body);
     req = apply_auth(req, runtime)?;
 
-    let resp = req
-        .send()
-        .await
-        .map_err(|e| {
-            tracing::error!(provider = %runtime.id, error = %e, "chat completion request failed");
-            BimoError::Network(format!("chat request to {} failed: {e}", runtime.id))
-        })?;
+    let resp = req.send().await.map_err(|e| {
+        tracing::error!(provider = %runtime.id, error = %e, "chat completion request failed");
+        BimoError::Network(format!("chat request to {} failed: {e}", runtime.id))
+    })?;
 
     let status = resp.status();
     if !status.is_success() {
@@ -795,12 +792,10 @@ mod tests {
             request_body_format: RequestBodyFormat::OpenAi,
         };
 
-        let messages = vec![
-            ChatMessage {
-                role: "user".into(),
-                content: "hello".into(),
-            },
-        ];
+        let messages = vec![ChatMessage {
+            role: "user".into(),
+            content: "hello".into(),
+        }];
 
         let body = build_request_body(&runtime, &messages, "gpt-4").unwrap();
         assert_eq!(body["model"], "gpt-4");

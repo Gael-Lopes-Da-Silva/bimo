@@ -11,9 +11,7 @@ pub struct ModelInfo {
 }
 
 /// Fetch available models for a provider and return them as [`ModelInfo`] entries.
-pub async fn fetch_models_for_provider(
-    runtime: &ProviderRuntime,
-) -> Result<Vec<ModelInfo>> {
+pub async fn fetch_models_for_provider(runtime: &ProviderRuntime) -> Result<Vec<ModelInfo>> {
     let raw_models: Vec<RawModel> = provider::fetch_models(runtime).await?;
 
     let models = raw_models

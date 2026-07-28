@@ -203,11 +203,13 @@ mod tests {
         assert!(!json.contains("api_key"));
 
         let deserialized: AppConfig = serde_json::from_str(&json).unwrap();
-        assert!(deserialized
-            .provider_configs
-            .get("ollama")
-            .unwrap()
-            .api_key
-            .is_none());
+        assert!(
+            deserialized
+                .provider_configs
+                .get("ollama")
+                .unwrap()
+                .api_key
+                .is_none()
+        );
     }
 }

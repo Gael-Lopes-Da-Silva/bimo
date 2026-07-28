@@ -110,7 +110,11 @@ impl Agent {
 
         tracing::debug!(provider_id, "fetching models");
         self.fetch_models().await?;
-        tracing::info!(provider_id, model_count = self.available_models.len(), "select_provider done");
+        tracing::info!(
+            provider_id,
+            model_count = self.available_models.len(),
+            "select_provider done"
+        );
 
         Ok(info)
     }
@@ -156,7 +160,10 @@ impl Agent {
         self.config.save()?;
 
         if self.config.selected_provider.as_deref() == Some(provider_id) {
-            tracing::debug!(provider_id, "rebuilding runtime for currently selected provider");
+            tracing::debug!(
+                provider_id,
+                "rebuilding runtime for currently selected provider"
+            );
             self.runtime = Some(
                 self.provider_registry
                     .resolve_runtime(provider_id, &self.config)?,
@@ -272,7 +279,10 @@ impl Agent {
     pub async fn execute_command(&mut self, input: &str) -> Result<CommandResult> {
         tracing::info!(input, "execute_command called");
         let mut ctx = self.build_command_context();
-        let result = self.command_registry.dispatch_async(input, &mut ctx).await?;
+        let result = self
+            .command_registry
+            .dispatch_async(input, &mut ctx)
+            .await?;
 
         // Handle special post-command actions
         let command_name = result.command.clone();
@@ -313,7 +323,11 @@ impl Agent {
                     self.revert_session(index)?;
                     return Ok(CommandResult {
                         command: "tree".into(),
-                        output: format!("Reverted to message {}. {} messages remaining.", index, self.session.message_count()),
+                        output: format!(
+                            "Reverted to message {}. {} messages remaining.",
+                            index,
+                            self.session.message_count()
+                        ),
                         data: None,
                     });
                 }
@@ -365,7 +379,10 @@ impl Agent {
 
     /// Compact the session by summarizing it via the provider.
     async fn compact_session(&mut self) -> Result<()> {
-        tracing::info!(message_count = self.session.message_count(), "compact_session called");
+        tracing::info!(
+            message_count = self.session.message_count(),
+            "compact_session called"
+        );
         let runtime = self
             .runtime
             .as_ref()
@@ -408,7 +425,10 @@ impl Agent {
         }];
 
         let response = provider::chat_completion(&runtime, &messages, model).await?;
-        tracing::debug!(summary_len = response.content.len(), "compaction summary received");
+        tracing::debug!(
+            summary_len = response.content.len(),
+            "compaction summary received"
+        );
         self.session.compact(&response.content);
 
         // Save the compacted session
@@ -458,7 +478,10 @@ impl Agent {
     pub fn revert_session(&mut self, index: usize) -> Result<()> {
         tracing::info!(index, "revert_session called");
         self.session.revert(index)?;
-        tracing::info!(remaining = self.session.message_count(), "revert_session done");
+        tracing::info!(
+            remaining = self.session.message_count(),
+            "revert_session done"
+        );
         self.session.save()
     }
 

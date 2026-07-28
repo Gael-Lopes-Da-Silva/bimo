@@ -98,7 +98,10 @@ async fn configure_provider(
     tracing::info!(provider_id = %req.provider_id, has_base_url = req.base_url.is_some(), has_api_key = req.api_key.is_some(), "POST /api/provider/configure");
     let mut api = state.lock().await;
     let resp = api.configure_provider(req);
-    tracing::info!(success = resp.success, "POST /api/provider/configure -> done");
+    tracing::info!(
+        success = resp.success,
+        "POST /api/provider/configure -> done"
+    );
     api_response_to_http(resp)
 }
 

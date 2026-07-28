@@ -168,7 +168,11 @@ impl Session {
             .map_err(|e| BimoError::Session(format!("failed to read session file: {e}")))?;
         let session: Session = serde_json::from_str(&data)
             .map_err(|e| BimoError::Session(format!("failed to parse session file: {e}")))?;
-        tracing::debug!(session_id = id, message_count = session.message_count(), "session loaded");
+        tracing::debug!(
+            session_id = id,
+            message_count = session.message_count(),
+            "session loaded"
+        );
         Ok(session)
     }
 
@@ -275,9 +279,7 @@ impl Session {
 
         self.messages.push(Message {
             role: Role::System,
-            content: format!(
-                "Previous conversation summary:\n{summary}"
-            ),
+            content: format!("Previous conversation summary:\n{summary}"),
             timestamp: Utc::now(),
         });
 

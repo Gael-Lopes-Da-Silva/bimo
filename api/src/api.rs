@@ -166,7 +166,10 @@ impl BimoApi {
     pub fn list_providers(&self) -> ApiResponse {
         tracing::debug!("list_providers called");
         let resp = ApiResponse::ok(self.agent.list_providers());
-        tracing::debug!(count = self.agent.list_providers().len(), "list_providers done");
+        tracing::debug!(
+            count = self.agent.list_providers().len(),
+            "list_providers done"
+        );
         resp
     }
 
@@ -520,6 +523,9 @@ mod tests {
         });
         // Should succeed because available_models is empty (allows unknown)
         assert!(resp.success);
-        assert_eq!(api.agent.config.selected_model.as_deref(), Some("test-model"));
+        assert_eq!(
+            api.agent.config.selected_model.as_deref(),
+            Some("test-model")
+        );
     }
 }

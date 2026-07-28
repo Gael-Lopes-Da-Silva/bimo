@@ -1,5 +1,5 @@
-pub mod api;
 pub mod agent;
+pub mod api;
 pub mod command;
 pub mod config;
 pub mod error;

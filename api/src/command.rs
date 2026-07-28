@@ -79,9 +79,7 @@ pub trait AsyncSlashCommand: Send + Sync {
         &'a self,
         ctx: &'a mut CommandContext,
         args: &'a str,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<CommandResult>> + Send + 'a>,
-    >;
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<CommandResult>> + Send + 'a>>;
 }
 
 // ---------------------------------------------------------------------------
@@ -176,7 +174,11 @@ impl CommandRegistry {
         if let Some(cmd) = self.commands.get(cmd_name) {
             let result = cmd.execute(ctx, args);
             match &result {
-                Ok(r) => tracing::debug!(command = cmd_name, output_len = r.output.len(), "sync command executed"),
+                Ok(r) => tracing::debug!(
+                    command = cmd_name,
+                    output_len = r.output.len(),
+                    "sync command executed"
+                ),
                 Err(e) => tracing::warn!(command = cmd_name, error = %e, "sync command failed"),
             }
             return result;
@@ -212,7 +214,11 @@ impl CommandRegistry {
         if let Some(cmd) = self.commands.get(cmd_name) {
             let result = cmd.execute(ctx, args);
             match &result {
-                Ok(r) => tracing::debug!(command = cmd_name, output_len = r.output.len(), "command executed"),
+                Ok(r) => tracing::debug!(
+                    command = cmd_name,
+                    output_len = r.output.len(),
+                    "command executed"
+                ),
                 Err(e) => tracing::warn!(command = cmd_name, error = %e, "command failed"),
             }
             return result;
@@ -220,7 +226,11 @@ impl CommandRegistry {
         if let Some(cmd) = self.async_commands.get(cmd_name) {
             let result = cmd.execute(ctx, args).await;
             match &result {
-                Ok(r) => tracing::debug!(command = cmd_name, output_len = r.output.len(), "async command executed"),
+                Ok(r) => tracing::debug!(
+                    command = cmd_name,
+                    output_len = r.output.len(),
+                    "async command executed"
+                ),
                 Err(e) => tracing::warn!(command = cmd_name, error = %e, "async command failed"),
             }
             return result;
@@ -247,11 +257,7 @@ impl CommandRegistry {
 
     /// List all commands with full metadata for autocompletion.
     pub fn list_detailed(&self) -> Vec<CommandInfo> {
-        let mut cmds: Vec<CommandInfo> = self
-            .commands
-            .values()
-            .map(|c| c.command_info())
-            .collect();
+        let mut cmds: Vec<CommandInfo> = self.commands.values().map(|c| c.command_info()).collect();
         for cmd in self.async_commands.values() {
             cmds.push(CommandInfo {
                 name: cmd.name().to_string(),
@@ -612,7 +618,11 @@ impl SlashCommand for ToolsCommand {
             })
             .collect();
 
-        let output = format!("Available tools ({}):\n{}", ctx.tools.len(), lines.join("\n\n"));
+        let output = format!(
+            "Available tools ({}):\n{}",
+            ctx.tools.len(),
+            lines.join("\n\n")
+        );
         let data = serde_json::to_value(&ctx.tools).ok();
 
         Ok(CommandResult {
@@ -718,13 +728,11 @@ impl SlashCommand for SessionCommand {
                     data,
                 })
             }
-            Some("save") => {
-                Ok(CommandResult {
-                    command: "session".into(),
-                    output: "Session saved.".into(),
-                    data: None,
-                })
-            }
+            Some("save") => Ok(CommandResult {
+                command: "session".into(),
+                output: "Session saved.".into(),
+                data: None,
+            }),
             Some("resume") => {
                 let id = parts.get(1).ok_or_else(|| {
                     BimoError::Command("usage: /session resume <session-id>".into())
@@ -789,13 +797,11 @@ impl SlashCommand for SessionCommand {
                     data: Some(data),
                 })
             }
-            Some("purge") => {
-                Ok(CommandResult {
-                    command: "session".into(),
-                    output: "All saved sessions purged.".into(),
-                    data: None,
-                })
-            }
+            Some("purge") => Ok(CommandResult {
+                command: "session".into(),
+                output: "All saved sessions purged.".into(),
+                data: None,
+            }),
             Some(other) => Err(BimoError::Command(format!(
                 "unknown subcommand '{other}'. Usage: /session [list|save|resume|delete|info|purge]"
             ))),
@@ -1139,7 +1145,9 @@ mod tests {
     fn dispatch_provider_select() {
         let reg = CommandRegistry::new();
         let mut ctx = make_context();
-        let _result = reg.dispatch("/provider select anthropic", &mut ctx).unwrap();
+        let _result = reg
+            .dispatch("/provider select anthropic", &mut ctx)
+            .unwrap();
         assert_eq!(ctx.selected_provider.as_deref(), Some("anthropic"));
     }
 
@@ -1183,10 +1191,12 @@ mod tests {
         let mut ctx = make_context();
         let result = reg.dispatch("/compact", &mut ctx);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("requires async dispatch"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("requires async dispatch")
+        );
     }
 
     #[test]
