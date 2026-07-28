@@ -383,16 +383,22 @@ impl Agent {
             "tree" => {
                 if let Some(index) = ctx.tree_fork_index {
                     tracing::info!(index, "forking session");
+                    let old_id = self.session.id.clone();
                     let forked = self.fork_session(index)?;
+                    let new_id = forked.id.clone();
                     self.session = forked;
                     return Ok(CommandResult {
                         command: "tree".into(),
                         output: format!(
                             "Forked to new session {} at message {}.",
-                            &self.session.id[..8.min(self.session.id.len())],
+                            &new_id[..8.min(new_id.len())],
                             index
                         ),
-                        data: None,
+                        data: Some(serde_json::json!({
+                            "action": "fork",
+                            "old_session_id": old_id,
+                            "new_session_id": new_id,
+                        })),
                     });
                 }
                 if let Some(index) = ctx.tree_revert_index {
@@ -405,7 +411,11 @@ impl Agent {
                             index,
                             self.session.message_count()
                         ),
-                        data: None,
+                        data: Some(serde_json::json!({
+                            "action": "revert",
+                            "session_id": self.session.id,
+                            "message_count": self.session.message_count(),
+                        })),
                     });
                 }
             }

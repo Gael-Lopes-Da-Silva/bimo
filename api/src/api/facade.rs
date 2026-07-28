@@ -427,11 +427,6 @@ impl BimoApi {
             .await
         {
             Ok(result) => {
-                // Check if the command requested a session switch
-                // (We need to re-dispatch to get the context, but we can check the result data)
-                // Actually, the switch_session_id is in the context which was consumed.
-                // We need to extract it differently. Let's handle it via the result data.
-                // For now, the switch is handled by the command setting data with session_id.
                 tracing::info!(command = %result.command, output_len = result.output.len(), "execute_command success");
 
                 // Handle session switch: check if this was a switch command
@@ -440,7 +435,6 @@ impl BimoApi {
                     && let Some(data) = &result.data
                     && let Some(sid) = data.get("session_id").and_then(|v| v.as_str())
                 {
-                    // Perform the actual switch
                     self.sync_active_to_pool();
                     if self.session_manager.get(sid).is_none()
                         && let Ok(loaded) = crate::session::Session::load(sid)
@@ -454,6 +448,49 @@ impl BimoApi {
                         self.agent.session = session.clone();
                     }
                 }
+
+                // Handle session resume: same as switch
+                if result.command == "session"
+                    && result.output.starts_with("Resumed session")
+                    && let Some(data) = &result.data
+                    && let Some(sid) = data.get("session_id").and_then(|v| v.as_str())
+                {
+                    self.sync_active_to_pool();
+                    if self.session_manager.get(sid).is_none()
+                        && let Ok(loaded) = crate::session::Session::load(sid)
+                    {
+                        self.session_manager.insert(loaded);
+                    }
+                    if let Err(e) = self.session_manager.set_active(sid) {
+                        return ApiResponse::err(e);
+                    }
+                    if let Some(session) = self.session_manager.active() {
+                        self.agent.session = session.clone();
+                    }
+                }
+
+                // Handle tree fork: insert new forked session into pool and set active
+                if result.command == "tree"
+                    && let Some(data) = &result.data
+                    && let Some(action) = data.get("action").and_then(|v| v.as_str())
+                    && action == "fork"
+                    && let Some(new_id) = data.get("new_session_id").and_then(|v| v.as_str())
+                {
+                    self.session_manager.insert(self.agent.session.clone());
+                    let _ = self.session_manager.set_active(new_id);
+                    self.persist_active_session();
+                }
+
+                // Handle tree revert: sync modified session back to pool
+                if result.command == "tree"
+                    && let Some(data) = &result.data
+                    && let Some(action) = data.get("action").and_then(|v| v.as_str())
+                    && action == "revert"
+                {
+                    self.sync_active_to_pool();
+                    self.persist_active_session();
+                }
+
                 ApiResponse::ok(result)
             }
             Err(e) => {
@@ -959,5 +996,125 @@ mod tests {
         let id = api.agent.session.id.clone();
         let resp = api.delete_session_from_pool(&id);
         assert!(!resp.success);
+    }
+
+    #[tokio::test]
+    async fn tree_fork_adds_new_session_to_pool() {
+        let mut api = BimoApi::new();
+        let old_id = api.agent.session.id.clone();
+
+        // Add messages to the session so fork has something to work with
+        // (session already has a system message from Agent::new())
+        api.agent.session.add_user_message("hello");
+        api.agent.session.add_assistant_message("hi");
+        assert_eq!(api.agent.session.message_count(), 3);
+        api.sync_active_to_pool();
+
+        // Fork at index 1 — keeps system + user (2 messages)
+        let resp = api
+            .execute_command(CommandRequest {
+                command: "/tree fork 1".into(),
+            })
+            .await;
+        assert!(resp.success);
+        let result = resp.data.unwrap();
+        let data = result["data"].as_object().unwrap();
+        assert_eq!(data["action"].as_str().unwrap(), "fork");
+        let new_id = data["new_session_id"].as_str().unwrap().to_string();
+
+        // New session should be in the pool and active
+        assert_ne!(new_id, old_id);
+        assert_eq!(api.session_manager.active_id(), &new_id);
+        assert_eq!(api.agent.session.id, new_id);
+
+        // Forked session should have 2 messages (index 0..=1)
+        assert_eq!(api.agent.session.message_count(), 2);
+
+        // Old session should still be in the pool
+        assert!(api.session_manager.get(&old_id).is_some());
+
+        // cleanup
+        let _ = crate::session::Session::delete_saved(&old_id);
+        let _ = crate::session::Session::delete_saved(&new_id);
+    }
+
+    #[tokio::test]
+    async fn tree_revert_syncs_to_pool() {
+        let mut api = BimoApi::new();
+        let id = api.agent.session.id.clone();
+
+        // Add messages (session already has 1 system message from Agent::new())
+        api.agent.session.add_user_message("a");
+        api.agent.session.add_user_message("b");
+        api.agent.session.add_user_message("c");
+        assert_eq!(api.agent.session.message_count(), 4);
+        api.sync_active_to_pool();
+
+        // Revert at index 1 — keeps system + first user message (2 messages)
+        let resp = api
+            .execute_command(CommandRequest {
+                command: "/tree revert 1".into(),
+            })
+            .await;
+        assert!(resp.success);
+        let result = resp.data.unwrap();
+        let data = result["data"].as_object().unwrap();
+        assert_eq!(data["action"].as_str().unwrap(), "revert");
+        assert_eq!(data["message_count"].as_u64().unwrap(), 2);
+
+        // Session should now have 2 messages
+        assert_eq!(api.agent.session.message_count(), 2);
+
+        // Pool should also reflect the change
+        let pooled = api.session_manager.get(&id).unwrap();
+        assert_eq!(pooled.message_count(), 2);
+
+        // cleanup
+        let _ = crate::session::Session::delete_saved(&id);
+    }
+
+    #[tokio::test]
+    async fn session_resume_switches_session() {
+        let mut api = BimoApi::new();
+        let id1 = api.agent.session.id.clone();
+
+        // Create a second session (persists to disk)
+        let resp = api.create_session();
+        let id2 = resp
+            .data
+            .unwrap()
+            .get("session_id")
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        // Switch back to first
+        let resp = api.switch_session(SwitchSessionRequest {
+            session_id: id1.clone(),
+        });
+        assert!(resp.success);
+
+        // Execute /session resume <id2>
+        let resp = api
+            .execute_command(CommandRequest {
+                command: format!("/session resume {id2}"),
+            })
+            .await;
+        assert!(resp.success);
+        assert!(
+            resp.data.unwrap()["output"]
+                .as_str()
+                .unwrap()
+                .contains("Resumed session")
+        );
+
+        // Should now be active on id2
+        assert_eq!(api.session_manager.active_id(), &id2);
+        assert_eq!(api.agent.session.id, id2);
+
+        // cleanup
+        let _ = crate::session::Session::delete_saved(&id1);
+        let _ = crate::session::Session::delete_saved(&id2);
     }
 }

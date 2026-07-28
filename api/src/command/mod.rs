@@ -565,8 +565,11 @@ mod tests {
                 timestamp: Utc::now(),
             },
         ];
-        let _result = reg.dispatch("/tree fork 0", &mut ctx).unwrap();
+        let result = reg.dispatch("/tree fork 0", &mut ctx).unwrap();
         assert_eq!(ctx.tree_fork_index, Some(0));
+        let data = result.data.unwrap();
+        assert_eq!(data["action"].as_str().unwrap(), "fork");
+        assert_eq!(data["index"].as_u64().unwrap(), 0);
     }
 
     #[test]
@@ -588,8 +591,11 @@ mod tests {
                 timestamp: Utc::now(),
             },
         ];
-        let _result = reg.dispatch("/tree revert 0", &mut ctx).unwrap();
+        let result = reg.dispatch("/tree revert 0", &mut ctx).unwrap();
         assert_eq!(ctx.tree_revert_index, Some(0));
+        let data = result.data.unwrap();
+        assert_eq!(data["action"].as_str().unwrap(), "revert");
+        assert_eq!(data["index"].as_u64().unwrap(), 0);
     }
 
     #[test]
