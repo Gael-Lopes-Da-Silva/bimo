@@ -53,6 +53,9 @@ pub struct RawModel {
     pub id: String,
     #[serde(default)]
     pub name: Option<String>,
+    /// Tier label (e.g. "free", "paid") inferred from pricing metadata.
+    #[serde(default)]
+    pub tier: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -91,6 +94,7 @@ mod tests {
         let model = RawModel {
             id: "gpt-4".into(),
             name: Some("GPT-4".into()),
+            tier: None,
         };
         let json = serde_json::to_string(&model).unwrap();
         let deserialized: RawModel = serde_json::from_str(&json).unwrap();

@@ -34,6 +34,30 @@ pub fn builtin_providers() -> Vec<ProviderInfo> {
             default_base_url: "http://localhost:11434".into(),
             builtin: true,
         },
+        ProviderInfo {
+            id: "openrouter".into(),
+            name: "OpenRouter".into(),
+            category: ProviderCategory::Cloud,
+            requires_api_key: true,
+            default_base_url: "https://openrouter.ai/api/v1".into(),
+            builtin: true,
+        },
+        ProviderInfo {
+            id: "opencode-go".into(),
+            name: "OpenCode Go".into(),
+            category: ProviderCategory::Cloud,
+            requires_api_key: true,
+            default_base_url: "https://opencode.ai/zen/go/v1".into(),
+            builtin: true,
+        },
+        ProviderInfo {
+            id: "opencode-zen".into(),
+            name: "OpenCode Zen".into(),
+            category: ProviderCategory::Cloud,
+            requires_api_key: true,
+            default_base_url: "https://opencode.ai/zen/v1".into(),
+            builtin: true,
+        },
     ]
 }
 
@@ -140,6 +164,13 @@ impl ProviderRegistry {
                     None,
                     RequestBodyFormat::Ollama,
                 ),
+                "openrouter" | "opencode-go" | "opencode-zen" => (
+                    "/chat/completions".into(),
+                    Some("/models".into()),
+                    Some("Authorization".into()),
+                    Some("Bearer ".into()),
+                    RequestBodyFormat::OpenAi,
+                ),
                 _ => return Err(BimoError::Provider("unsupported builtin".into())),
             };
 
@@ -196,7 +227,7 @@ mod tests {
     #[test]
     fn builtin_providers_count() {
         let providers = builtin_providers();
-        assert_eq!(providers.len(), 3);
+        assert_eq!(providers.len(), 6);
     }
 
     #[test]
@@ -206,6 +237,9 @@ mod tests {
         assert!(ids.contains(&"openai"));
         assert!(ids.contains(&"anthropic"));
         assert!(ids.contains(&"ollama"));
+        assert!(ids.contains(&"openrouter"));
+        assert!(ids.contains(&"opencode-go"));
+        assert!(ids.contains(&"opencode-zen"));
     }
 
     #[test]
@@ -234,6 +268,36 @@ mod tests {
     }
 
     #[test]
+    fn openrouter_provider_metadata() {
+        let providers = builtin_providers();
+        let openrouter = providers.iter().find(|p| p.id == "openrouter").unwrap();
+        assert_eq!(openrouter.category, ProviderCategory::Cloud);
+        assert!(openrouter.requires_api_key);
+        assert!(openrouter.builtin);
+        assert_eq!(openrouter.default_base_url, "https://openrouter.ai/api/v1");
+    }
+
+    #[test]
+    fn opencode_go_provider_metadata() {
+        let providers = builtin_providers();
+        let go = providers.iter().find(|p| p.id == "opencode-go").unwrap();
+        assert_eq!(go.category, ProviderCategory::Cloud);
+        assert!(go.requires_api_key);
+        assert!(go.builtin);
+        assert_eq!(go.default_base_url, "https://opencode.ai/zen/go/v1");
+    }
+
+    #[test]
+    fn opencode_zen_provider_metadata() {
+        let providers = builtin_providers();
+        let zen = providers.iter().find(|p| p.id == "opencode-zen").unwrap();
+        assert_eq!(zen.category, ProviderCategory::Cloud);
+        assert!(zen.requires_api_key);
+        assert!(zen.builtin);
+        assert_eq!(zen.default_base_url, "https://opencode.ai/zen/v1");
+    }
+
+    #[test]
     fn registry_list_includes_custom() {
         let reg = ProviderRegistry::new();
         let mut config = AppConfig::default();
@@ -250,7 +314,7 @@ mod tests {
         });
 
         let all = reg.list_all(&config);
-        assert_eq!(all.len(), 4);
+        assert_eq!(all.len(), 7);
         assert!(all.iter().any(|p| p.id == "custom-1" && !p.builtin));
     }
 

@@ -299,6 +299,7 @@ mod tests {
                 id: "gpt-4".into(),
                 name: "GPT-4".into(),
                 provider_id: "openai".into(),
+                tier: None,
             }],
             session_id: "test-session-id".into(),
             session_message_count: 5,

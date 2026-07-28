@@ -377,7 +377,7 @@ mod tests {
         assert!(resp.data.is_some());
         let data = resp.data.unwrap();
         let providers = data.as_array().unwrap();
-        assert_eq!(providers.len(), 3);
+        assert_eq!(providers.len(), 6);
     }
 
     #[test]

@@ -67,7 +67,8 @@ fn parse_models_response(
                 .filter_map(|v| {
                     let id = v.get("id")?.as_str()?.to_string();
                     let name = v.get("name").and_then(|n| n.as_str()).map(String::from);
-                    Some(RawModel { id, name })
+                    let tier = infer_tier_from_pricing(&v);
+                    Some(RawModel { id, name, tier })
                 })
                 .collect();
             Ok(models)
@@ -82,11 +83,58 @@ fn parse_models_response(
                 .into_iter()
                 .filter_map(|v| {
                     let id = v.get("name")?.as_str()?.to_string();
-                    Some(RawModel { id, name: None })
+                    Some(RawModel {
+                        id,
+                        name: None,
+                        tier: None,
+                    })
                 })
                 .collect();
             Ok(models)
         }
+    }
+}
+
+/// Try to infer a model tier from pricing metadata in the API response.
+/// Returns "free" if prompt and completion costs are both zero or absent,
+/// "paid" if any pricing is present and non-zero, or `None` if indeterminate.
+fn infer_tier_from_pricing(model: &serde_json::Value) -> Option<String> {
+    if let Some(pricing) = model.get("pricing") {
+        let prompt_cost = pricing.get("prompt").and_then(|v| {
+            v.as_f64()
+                .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+        });
+        let completion_cost = pricing.get("completion").and_then(|v| {
+            v.as_f64()
+                .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+        });
+
+        match (prompt_cost, completion_cost) {
+            (Some(p), Some(c)) => {
+                if p == 0.0 && c == 0.0 {
+                    Some("free".into())
+                } else {
+                    Some("paid".into())
+                }
+            }
+            (Some(p), None) => {
+                if p == 0.0 {
+                    Some("free".into())
+                } else {
+                    Some("paid".into())
+                }
+            }
+            (None, Some(c)) => {
+                if c == 0.0 {
+                    Some("free".into())
+                } else {
+                    Some("paid".into())
+                }
+            }
+            (None, None) => Some("free".into()),
+        }
+    } else {
+        None
     }
 }
 
@@ -589,5 +637,46 @@ mod tests {
         };
         let body = build_request_body(&runtime, &messages, "qwen3", &thinking).unwrap();
         assert_eq!(body["think"], true);
+    }
+
+    #[test]
+    fn infer_tier_free_model() {
+        let model = serde_json::json!({
+            "id": "free-model",
+            "pricing": { "prompt": "0", "completion": "0" }
+        });
+        assert_eq!(infer_tier_from_pricing(&model).as_deref(), Some("free"));
+    }
+
+    #[test]
+    fn infer_tier_paid_model() {
+        let model = serde_json::json!({
+            "id": "gpt-4",
+            "pricing": { "prompt": "0.00003", "completion": "0.00006" }
+        });
+        assert_eq!(infer_tier_from_pricing(&model).as_deref(), Some("paid"));
+    }
+
+    #[test]
+    fn infer_tier_no_pricing() {
+        let model = serde_json::json!({ "id": "gpt-4" });
+        assert!(infer_tier_from_pricing(&model).is_none());
+    }
+
+    #[test]
+    fn parse_models_response_with_pricing() {
+        let runtime = make_runtime(RequestBodyFormat::OpenAi);
+        let raw = serde_json::json!({
+            "data": [
+                { "id": "free-model", "pricing": { "prompt": "0", "completion": "0" } },
+                { "id": "paid-model", "pricing": { "prompt": "0.01", "completion": "0.02" } },
+                { "id": "unknown-model" }
+            ]
+        });
+        let models = parse_models_response(&runtime, &raw).unwrap();
+        assert_eq!(models.len(), 3);
+        assert_eq!(models[0].tier.as_deref(), Some("free"));
+        assert_eq!(models[1].tier.as_deref(), Some("paid"));
+        assert!(models[2].tier.is_none());
     }
 }
