@@ -434,7 +434,8 @@ mod tests {
         let data = resp.data.unwrap();
         assert!(data.get("session_id").is_some());
         assert!(data.get("message_count").is_some());
-        assert_eq!(data["message_count"], 0);
+        // Session starts with 1 system message
+        assert_eq!(data["message_count"], 1);
     }
 
     #[test]
@@ -465,9 +466,11 @@ mod tests {
     #[test]
     fn clear_session_resets_messages() {
         let mut api = BimoApi::new();
-        // Add a message via agent directly
-        api.agent.session.add_user_message("test");
+        // Session starts with 1 system message
         assert_eq!(api.agent.session.message_count(), 1);
+        // Add a user message
+        api.agent.session.add_user_message("test");
+        assert_eq!(api.agent.session.message_count(), 2);
 
         let resp = api.clear_session();
         assert!(resp.success);
@@ -482,9 +485,10 @@ mod tests {
         let resp = api.get_session();
         assert!(resp.success);
         let data = resp.data.unwrap();
-        assert_eq!(data["message_count"], 1);
+        // System message + user message
+        assert_eq!(data["message_count"], 2);
         let messages = data.get("messages").unwrap().as_array().unwrap();
-        assert_eq!(messages.len(), 1);
+        assert_eq!(messages.len(), 2);
     }
 
     #[test]
@@ -527,5 +531,16 @@ mod tests {
             api.agent.config.selected_model.as_deref(),
             Some("test-model")
         );
+    }
+
+    #[test]
+    fn session_starts_with_system_prompt() {
+        let api = BimoApi::new();
+        let session = &api.agent.session;
+        assert_eq!(session.message_count(), 1);
+        assert_eq!(session.messages[0].role, crate::session::Role::System);
+        assert!(session.messages[0].content.contains("Bimo"));
+        assert!(session.messages[0].content.contains("read_file"));
+        assert!(session.messages[0].content.contains("write_file"));
     }
 }

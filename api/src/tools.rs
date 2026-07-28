@@ -144,6 +144,36 @@ impl ToolRegistry {
     pub fn get(&self, name: &str) -> Option<&Tool> {
         self.tools.iter().find(|t| t.name == name)
     }
+
+    /// Render all tools as XML blocks suitable for the system prompt.
+    pub fn render_tool_xml(&self) -> String {
+        let blocks: Vec<String> = self.tools.iter().map(render_single_tool_xml).collect();
+        blocks.join("\n\n")
+    }
+}
+
+fn render_single_tool_xml(tool: &Tool) -> String {
+    let params: Vec<String> = tool
+        .parameters
+        .iter()
+        .map(|p| {
+            format!(
+                "    <param name=\"{}\" type=\"{}\" required=\"{}\">{}</param>",
+                p.name, p.parameter_type, p.required, p.description
+            )
+        })
+        .collect();
+
+    let params_block = if params.is_empty() {
+        String::new()
+    } else {
+        format!("\n  <parameters>\n{}\n  </parameters>", params.join("\n"))
+    };
+
+    format!(
+        "<tool>\n  <name>{}</name>\n  <description>{}</description>{}\n</tool>",
+        tool.name, tool.description, params_block
+    )
 }
 
 #[cfg(test)]
@@ -218,5 +248,55 @@ mod tests {
         let json = serde_json::to_string(&reg.tools).unwrap();
         let deserialized: Vec<Tool> = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.len(), reg.tools.len());
+    }
+
+    #[test]
+    fn render_tool_xml_contains_all_tools() {
+        let reg = ToolRegistry::new();
+        let xml = reg.render_tool_xml();
+        for name in &[
+            "read_file",
+            "write_file",
+            "list_files",
+            "run_command",
+            "search_files",
+            "search_content",
+        ] {
+            assert!(
+                xml.contains(&format!("<name>{name}</name>")),
+                "missing tool {name}"
+            );
+        }
+    }
+
+    #[test]
+    fn render_tool_xml_format() {
+        let reg = ToolRegistry::new();
+        let xml = reg.render_tool_xml();
+        // read_file should have one param
+        assert!(xml.contains("<name>read_file</name>"));
+        assert!(xml.contains("path"));
+        assert!(xml.contains("required=\"true\""));
+        // Tool blocks separated by blank lines
+        assert!(xml.contains("</tool>\n\n<tool>"));
+    }
+
+    #[test]
+    fn render_tool_xml_custom_tool() {
+        let mut reg = ToolRegistry::new();
+        reg.register(Tool {
+            name: "deploy".into(),
+            description: "Deploy to production".into(),
+            parameters: vec![ToolParameter {
+                name: "env".into(),
+                description: "Target environment".into(),
+                required: true,
+                parameter_type: "string".into(),
+            }],
+        });
+        let xml = reg.render_tool_xml();
+        assert!(xml.contains("<name>deploy</name>"));
+        assert!(xml.contains("Deploy to production"));
+        assert!(xml.contains("env"));
     }
 }

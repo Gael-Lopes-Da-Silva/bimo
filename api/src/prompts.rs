@@ -5,11 +5,13 @@ use std::path::PathBuf;
 pub const COMPACT: &str = "COMPACT.md";
 pub const COMPACT_PREFIX: &str = "COMPACT_PREFIX.md";
 pub const HELP: &str = "HELP.md";
+pub const SYSTEM: &str = "SYSTEM.md";
 
 /// Compile-time fallback content embedded from the prompts/ directory.
 const COMPACT_DEFAULT: &str = include_str!("../prompts/COMPACT.md");
 const COMPACT_PREFIX_DEFAULT: &str = include_str!("../prompts/COMPACT_PREFIX.md");
 const HELP_DEFAULT: &str = include_str!("../prompts/HELP.md");
+const SYSTEM_DEFAULT: &str = include_str!("../prompts/SYSTEM.md");
 
 /// Resolve the prompts directory. Checks, in order:
 /// 1. `BIMO_PROMPTS_DIR` environment variable
@@ -57,6 +59,7 @@ pub fn load(name: &str) -> String {
         COMPACT => COMPACT_DEFAULT.to_string(),
         COMPACT_PREFIX => COMPACT_PREFIX_DEFAULT.to_string(),
         HELP => HELP_DEFAULT.to_string(),
+        SYSTEM => SYSTEM_DEFAULT.to_string(),
         _ => String::new(),
     }
 }
@@ -87,6 +90,10 @@ mod tests {
         let help = load(HELP);
         assert!(!help.is_empty());
         assert!(help.contains("/help"));
+
+        let system = load(SYSTEM);
+        assert!(!system.is_empty());
+        assert!(system.contains("Bimo"));
     }
 
     #[test]
@@ -120,5 +127,11 @@ mod tests {
     fn compact_prefix_has_summary_placeholder() {
         let template = load(COMPACT_PREFIX);
         assert!(template.contains("{{SUMMARY}}"));
+    }
+
+    #[test]
+    fn system_prompt_has_tools_placeholder() {
+        let template = load(SYSTEM);
+        assert!(template.contains("{{TOOLS}}"));
     }
 }

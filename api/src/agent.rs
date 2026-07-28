@@ -42,7 +42,14 @@ impl Agent {
         let provider_registry = ProviderRegistry::new();
         let command_registry = CommandRegistry::new();
         let tool_registry = ToolRegistry::new();
-        let session = Session::new();
+        let mut session = Session::new();
+
+        // Inject system prompt with tool descriptions
+        let tool_xml = tool_registry.render_tool_xml();
+        let system_prompt =
+            prompts::render(&prompts::load(prompts::SYSTEM), &[("TOOLS", &tool_xml)]);
+        session.add_system_message(&system_prompt);
+        tracing::debug!(prompt_len = system_prompt.len(), "system prompt injected");
 
         tracing::debug!(
             session_id = %session.id,
@@ -412,7 +419,10 @@ impl Agent {
             .collect();
 
         let prompt_template = prompts::load(prompts::COMPACT);
-        let prompt = prompts::render(&prompt_template, &[("CONVERSATION", &conversation.join("\n\n"))]);
+        let prompt = prompts::render(
+            &prompt_template,
+            &[("CONVERSATION", &conversation.join("\n\n"))],
+        );
 
         tracing::debug!(prompt_len = prompt.len(), "sending summarization request");
         let messages = vec![provider::ChatMessage {
