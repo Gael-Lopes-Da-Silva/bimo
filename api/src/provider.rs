@@ -1,4 +1,4 @@
-use crate::config::{AppConfig, CustomProviderConfig};
+use crate::config::{AppConfig, CustomProviderConfig, ThinkingConfig};
 use crate::error::{BimoError, Result};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -372,6 +372,7 @@ pub struct ChatMessage {
 #[derive(Debug)]
 pub struct ChatCompletionResponse {
     pub content: String,
+    pub thinking: Option<String>,
     pub model: Option<String>,
     pub usage: Option<UsageInfo>,
 }
@@ -388,6 +389,7 @@ pub async fn chat_completion(
     runtime: &ProviderRuntime,
     messages: &[ChatMessage],
     model: &str,
+    thinking: &ThinkingConfig,
 ) -> Result<ChatCompletionResponse> {
     let client = Client::new();
     let url = format!(
@@ -396,8 +398,8 @@ pub async fn chat_completion(
         runtime.chat_endpoint
     );
 
-    tracing::debug!(provider = %runtime.id, model, url = %url, message_count = messages.len(), "sending chat completion request");
-    let body = build_request_body(runtime, messages, model)?;
+    tracing::debug!(provider = %runtime.id, model, url = %url, message_count = messages.len(), thinking_enabled = thinking.enabled, "sending chat completion request");
+    let body = build_request_body(runtime, messages, model, thinking)?;
 
     let mut req = client.post(&url).json(&body);
     req = apply_auth(req, runtime)?;
@@ -437,9 +439,10 @@ fn build_request_body(
     runtime: &ProviderRuntime,
     messages: &[ChatMessage],
     model: &str,
+    thinking: &ThinkingConfig,
 ) -> Result<serde_json::Value> {
     match runtime.request_body_format {
-        RequestBodyFormat::OpenAi | RequestBodyFormat::Anthropic => {
+        RequestBodyFormat::OpenAi => {
             let msgs: Vec<serde_json::Value> = messages
                 .iter()
                 .map(|m| {
@@ -449,10 +452,47 @@ fn build_request_body(
                     })
                 })
                 .collect();
-            Ok(serde_json::json!({
+            let mut body = serde_json::json!({
                 "model": model,
                 "messages": msgs,
-            }))
+            });
+            // OpenAI o-series: reasoning_effort parameter
+            if thinking.enabled
+                && let Some(ref effort) = thinking.reasoning_effort
+            {
+                body.as_object_mut()
+                    .unwrap()
+                    .insert("reasoning_effort".into(), serde_json::json!(effort));
+            }
+            Ok(body)
+        }
+        RequestBodyFormat::Anthropic => {
+            let msgs: Vec<serde_json::Value> = messages
+                .iter()
+                .map(|m| {
+                    serde_json::json!({
+                        "role": m.role,
+                        "content": m.content,
+                    })
+                })
+                .collect();
+            let mut body = serde_json::json!({
+                "model": model,
+                "messages": msgs,
+                "max_tokens": 8192,
+            });
+            // Anthropic thinking parameter
+            if thinking.enabled {
+                let budget = thinking.budget_tokens.unwrap_or(10000);
+                body.as_object_mut().unwrap().insert(
+                    "thinking".into(),
+                    serde_json::json!({
+                        "type": "enabled",
+                        "budget_tokens": budget,
+                    }),
+                );
+            }
+            Ok(body)
         }
         RequestBodyFormat::Ollama => {
             let msgs: Vec<serde_json::Value> = messages
@@ -464,11 +504,18 @@ fn build_request_body(
                     })
                 })
                 .collect();
-            Ok(serde_json::json!({
+            let mut body = serde_json::json!({
                 "model": model,
                 "messages": msgs,
                 "stream": false,
-            }))
+            });
+            // Ollama think parameter
+            if thinking.enabled
+                && let Some(obj) = body.as_object_mut()
+            {
+                obj.insert("think".into(), serde_json::json!(true));
+            }
+            Ok(body)
         }
     }
 }
@@ -478,7 +525,7 @@ fn parse_chat_response(
     raw: &serde_json::Value,
 ) -> Result<ChatCompletionResponse> {
     // OpenAI-compatible response: { "choices": [{ "message": { "content": "..." } }], ... }
-    // Anthropic response: { "content": [{ "text": "..." }], ... }
+    // Anthropic response: { "content": [{ "type": "text", "text": "..." }, { "type": "thinking", "thinking": "..." }], ... }
     // Ollama response: { "message": { "content": "..." } }
 
     // Try OpenAI format first
@@ -500,19 +547,33 @@ fn parse_chat_response(
         });
         return Ok(ChatCompletionResponse {
             content: content.to_string(),
+            thinking: None,
             model,
             usage,
         });
     }
 
-    // Try Anthropic format
-    if let Some(text) = raw
-        .get("content")
-        .and_then(|c| c.as_array())
-        .and_then(|a| a.first())
-        .and_then(|c| c.get("text"))
-        .and_then(|t| t.as_str())
-    {
+    // Try Anthropic format — content is an array that may include thinking blocks
+    if let Some(content_array) = raw.get("content").and_then(|c| c.as_array()) {
+        let mut text_parts = Vec::new();
+        let mut thinking_parts = Vec::new();
+
+        for block in content_array {
+            match block.get("type").and_then(|t| t.as_str()) {
+                Some("thinking") => {
+                    if let Some(thinking) = block.get("thinking").and_then(|t| t.as_str()) {
+                        thinking_parts.push(thinking);
+                    }
+                }
+                Some("text") => {
+                    if let Some(text) = block.get("text").and_then(|t| t.as_str()) {
+                        text_parts.push(text);
+                    }
+                }
+                _ => {}
+            }
+        }
+
         let model = raw.get("model").and_then(|m| m.as_str()).map(String::from);
         let usage = raw.get("usage").and_then(|u| {
             let input = u.get("input_tokens")?.as_u64()? as u32;
@@ -524,7 +585,12 @@ fn parse_chat_response(
             })
         });
         return Ok(ChatCompletionResponse {
-            content: text.to_string(),
+            content: text_parts.join(""),
+            thinking: if thinking_parts.is_empty() {
+                None
+            } else {
+                Some(thinking_parts.join("\n"))
+            },
             model,
             usage,
         });
@@ -539,6 +605,7 @@ fn parse_chat_response(
         let model = raw.get("model").and_then(|m| m.as_str()).map(String::from);
         return Ok(ChatCompletionResponse {
             content: content.to_string(),
+            thinking: None,
             model,
             usage: None,
         });
@@ -720,7 +787,7 @@ mod tests {
         };
 
         let raw = serde_json::json!({
-            "content": [{ "text": "Hi there!" }],
+            "content": [{ "type": "text", "text": "Hi there!" }],
             "model": "claude-3",
             "usage": {
                 "input_tokens": 8,
@@ -797,7 +864,7 @@ mod tests {
             content: "hello".into(),
         }];
 
-        let body = build_request_body(&runtime, &messages, "gpt-4").unwrap();
+        let body = build_request_body(&runtime, &messages, "gpt-4", &ThinkingConfig::default()).unwrap();
         assert_eq!(body["model"], "gpt-4");
         assert!(body["messages"].is_array());
         assert_eq!(body["messages"][0]["role"], "user");
@@ -817,7 +884,7 @@ mod tests {
         };
 
         let messages = vec![];
-        let body = build_request_body(&runtime, &messages, "llama3").unwrap();
+        let body = build_request_body(&runtime, &messages, "llama3", &ThinkingConfig::default()).unwrap();
         assert_eq!(body["stream"], false);
     }
 
@@ -848,5 +915,161 @@ mod tests {
         let json = serde_json::to_string(&usage).unwrap();
         let deserialized: UsageInfo = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.total_tokens, 30);
+    }
+
+    #[test]
+    fn parse_anthropic_response_with_thinking() {
+        let runtime = ProviderRuntime {
+            id: "anthropic".into(),
+            base_url: "".into(),
+            api_key: None,
+            chat_endpoint: "".into(),
+            models_endpoint: None,
+            auth_header: None,
+            auth_prefix: None,
+            request_body_format: RequestBodyFormat::Anthropic,
+        };
+
+        let raw = serde_json::json!({
+            "content": [
+                { "type": "thinking", "thinking": "Let me consider this..." },
+                { "type": "text", "text": "The answer is 42." }
+            ],
+            "model": "claude-sonnet-4-20250514",
+            "usage": {
+                "input_tokens": 10,
+                "output_tokens": 20
+            }
+        });
+
+        let resp = parse_chat_response(&runtime, &raw).unwrap();
+        assert_eq!(resp.content, "The answer is 42.");
+        assert_eq!(resp.thinking.as_deref(), Some("Let me consider this..."));
+        assert_eq!(resp.model.as_deref(), Some("claude-sonnet-4-20250514"));
+    }
+
+    #[test]
+    fn parse_anthropic_response_without_thinking() {
+        let runtime = ProviderRuntime {
+            id: "anthropic".into(),
+            base_url: "".into(),
+            api_key: None,
+            chat_endpoint: "".into(),
+            models_endpoint: None,
+            auth_header: None,
+            auth_prefix: None,
+            request_body_format: RequestBodyFormat::Anthropic,
+        };
+
+        let raw = serde_json::json!({
+            "content": [{ "type": "text", "text": "Hello!" }],
+            "model": "claude-3",
+            "usage": { "input_tokens": 5, "output_tokens": 3 }
+        });
+
+        let resp = parse_chat_response(&runtime, &raw).unwrap();
+        assert_eq!(resp.content, "Hello!");
+        assert!(resp.thinking.is_none());
+    }
+
+    #[test]
+    fn build_openai_request_body_with_reasoning_effort() {
+        let runtime = ProviderRuntime {
+            id: "openai".into(),
+            base_url: "".into(),
+            api_key: None,
+            chat_endpoint: "".into(),
+            models_endpoint: None,
+            auth_header: None,
+            auth_prefix: None,
+            request_body_format: RequestBodyFormat::OpenAi,
+        };
+
+        let messages = vec![ChatMessage {
+            role: "user".into(),
+            content: "hello".into(),
+        }];
+
+        let thinking = ThinkingConfig {
+            enabled: true,
+            reasoning_effort: Some("high".into()),
+            budget_tokens: None,
+        };
+        let body = build_request_body(&runtime, &messages, "o3", &thinking).unwrap();
+        assert_eq!(body["reasoning_effort"], "high");
+    }
+
+    #[test]
+    fn build_openai_request_body_thinking_disabled() {
+        let runtime = ProviderRuntime {
+            id: "openai".into(),
+            base_url: "".into(),
+            api_key: None,
+            chat_endpoint: "".into(),
+            models_endpoint: None,
+            auth_header: None,
+            auth_prefix: None,
+            request_body_format: RequestBodyFormat::OpenAi,
+        };
+
+        let messages = vec![ChatMessage {
+            role: "user".into(),
+            content: "hello".into(),
+        }];
+
+        let thinking = ThinkingConfig::default();
+        let body = build_request_body(&runtime, &messages, "gpt-4", &thinking).unwrap();
+        assert!(body.get("reasoning_effort").is_none());
+    }
+
+    #[test]
+    fn build_anthropic_request_body_with_thinking() {
+        let runtime = ProviderRuntime {
+            id: "anthropic".into(),
+            base_url: "".into(),
+            api_key: None,
+            chat_endpoint: "".into(),
+            models_endpoint: None,
+            auth_header: None,
+            auth_prefix: None,
+            request_body_format: RequestBodyFormat::Anthropic,
+        };
+
+        let messages = vec![ChatMessage {
+            role: "user".into(),
+            content: "hello".into(),
+        }];
+
+        let thinking = ThinkingConfig {
+            enabled: true,
+            budget_tokens: Some(5000),
+            reasoning_effort: None,
+        };
+        let body = build_request_body(&runtime, &messages, "claude-sonnet-4-20250514", &thinking).unwrap();
+        assert_eq!(body["thinking"]["type"], "enabled");
+        assert_eq!(body["thinking"]["budget_tokens"], 5000);
+    }
+
+    #[test]
+    fn build_ollama_request_body_with_think() {
+        let runtime = ProviderRuntime {
+            id: "ollama".into(),
+            base_url: "".into(),
+            api_key: None,
+            chat_endpoint: "".into(),
+            models_endpoint: None,
+            auth_header: None,
+            auth_prefix: None,
+            request_body_format: RequestBodyFormat::Ollama,
+        };
+
+        let messages = vec![];
+        let thinking = ThinkingConfig {
+            enabled: true,
+            budget_tokens: None,
+            reasoning_effort: None,
+        };
+        let body = build_request_body(&runtime, &messages, "qwen3", &thinking).unwrap();
+        assert_eq!(body["think"], true);
     }
 }

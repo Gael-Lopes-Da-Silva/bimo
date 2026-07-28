@@ -19,6 +19,23 @@ pub struct AppConfig {
 
     /// User-registered custom providers.
     pub custom_providers: Vec<CustomProviderConfig>,
+
+    /// Thinking/reasoning configuration.
+    #[serde(default)]
+    pub thinking: ThinkingConfig,
+}
+
+/// Configuration for model thinking/reasoning.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ThinkingConfig {
+    /// Whether thinking is enabled.
+    pub enabled: bool,
+    /// Thinking budget for Anthropic models (tokens). None = provider default.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub budget_tokens: Option<u32>,
+    /// Reasoning effort for OpenAI o-series ("low", "medium", "high").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
 }
 
 /// Configuration that is persisted for a single provider.
@@ -138,6 +155,7 @@ mod tests {
             selected_model: Some("gpt-4".to_string()),
             provider_configs,
             custom_providers: vec![],
+            thinking: ThinkingConfig::default(),
         };
 
         let json = serde_json::to_string(&cfg).unwrap();

@@ -1,5 +1,5 @@
 use crate::command::{CommandContext, CommandRegistry, CommandResult};
-use crate::config::{AppConfig, CustomProviderConfig, ProviderPersistedConfig};
+use crate::config::{AppConfig, CustomProviderConfig, ProviderPersistedConfig, ThinkingConfig};
 use crate::error::{BimoError, Result};
 use crate::model::{self, ModelInfo};
 use crate::prompts;
@@ -16,6 +16,7 @@ const MAX_TOOL_ITERATIONS: usize = 20;
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ChatResponse {
     pub content: String,
+    pub thinking: Option<String>,
     pub model: Option<String>,
     pub usage: Option<UsageInfo>,
     pub session_id: String,
@@ -274,7 +275,7 @@ impl Agent {
         // Tool calling loop
         for iteration in 0..=MAX_TOOL_ITERATIONS {
             let messages = self.session.to_chat_messages();
-            let response = provider::chat_completion(&runtime, &messages, model).await?;
+            let response = provider::chat_completion(&runtime, &messages, model, &self.config.thinking).await?;
 
             // Parse tool calls from the response
             let tool_calls = tool_call::parse_tool_calls(&response.content);
@@ -291,6 +292,7 @@ impl Agent {
                 );
                 return Ok(ChatResponse {
                     content: response.content,
+                    thinking: response.thinking,
                     model: response.model,
                     usage: response.usage,
                     session_id: self.session.id.clone(),
@@ -478,7 +480,7 @@ impl Agent {
             content: prompt,
         }];
 
-        let response = provider::chat_completion(&runtime, &messages, model).await?;
+        let response = provider::chat_completion(&runtime, &messages, model, &ThinkingConfig::default()).await?;
         tracing::debug!(
             summary_len = response.content.len(),
             "compaction summary received"
@@ -569,11 +571,13 @@ impl Agent {
             has_runtime: self.runtime.is_some(),
             tree_fork_index: None,
             tree_revert_index: None,
+            thinking: self.config.thinking.clone(),
         }
     }
 
     fn sync_from_command_context(&mut self, ctx: &CommandContext) {
         self.config.selected_provider = ctx.selected_provider.clone();
         self.config.selected_model = ctx.selected_model.clone();
+        self.config.thinking = ctx.thinking.clone();
     }
 }

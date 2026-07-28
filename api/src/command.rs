@@ -1,6 +1,7 @@
 use crate::error::{BimoError, Result};
 use crate::session::SessionInfo;
 use crate::tools::Tool;
+use crate::config::ThinkingConfig;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing;
@@ -116,6 +117,9 @@ pub struct CommandContext {
     // Tree command post-actions
     pub tree_fork_index: Option<usize>,
     pub tree_revert_index: Option<usize>,
+
+    // Thinking config
+    pub thinking: ThinkingConfig,
 }
 
 // ---------------------------------------------------------------------------
@@ -148,6 +152,7 @@ impl CommandRegistry {
         reg.register(Box::new(ToolsCommand));
         reg.register(Box::new(SessionCommand));
         reg.register(Box::new(TreeCommand));
+        reg.register(Box::new(ThinkingCommand));
         // Register async commands
         reg.register_async(Box::new(CompactCommand));
         reg
@@ -1016,6 +1021,99 @@ impl AsyncSlashCommand for CompactCommand {
     }
 }
 
+// ---------------------------------------------------------------------------
+// /thinking — manage model thinking/reasoning
+// ---------------------------------------------------------------------------
+
+struct ThinkingCommand;
+
+impl SlashCommand for ThinkingCommand {
+    fn name(&self) -> &str {
+        "thinking"
+    }
+
+    fn description(&self) -> &str {
+        "toggle or configure model thinking (on|off|budget <tokens>|effort <low|medium|high>)"
+    }
+
+    fn execute(&self, ctx: &mut CommandContext, args: &str) -> Result<CommandResult> {
+        let args = args.trim();
+
+        if args.is_empty() || args == "status" {
+            let status = if ctx.thinking.enabled {
+                let mut details = vec!["Thinking: ON".to_string()];
+                if let Some(ref effort) = ctx.thinking.reasoning_effort {
+                    details.push(format!("Reasoning effort: {}", effort));
+                }
+                if let Some(budget) = ctx.thinking.budget_tokens {
+                    details.push(format!("Budget tokens: {}", budget));
+                }
+                details.join("\n")
+            } else {
+                "Thinking: OFF".to_string()
+            };
+            return Ok(CommandResult {
+                command: "thinking".into(),
+                output: status,
+                data: None,
+            });
+        }
+
+        let parts: Vec<&str> = args.splitn(2, ' ').collect();
+        match parts[0] {
+            "on" => {
+                ctx.thinking.enabled = true;
+                Ok(CommandResult {
+                    command: "thinking".into(),
+                    output: "Thinking enabled.".into(),
+                    data: Some(serde_json::json!({ "thinking_enabled": true })),
+                })
+            }
+            "off" => {
+                ctx.thinking.enabled = false;
+                Ok(CommandResult {
+                    command: "thinking".into(),
+                    output: "Thinking disabled.".into(),
+                    data: Some(serde_json::json!({ "thinking_enabled": false })),
+                })
+            }
+            "budget" => {
+                let tokens = parts.get(1).and_then(|s| s.parse::<u32>().ok()).ok_or_else(
+                    || BimoError::Command("usage: /thinking budget <tokens> (e.g. /thinking budget 10000)".into()),
+                )?;
+                ctx.thinking.enabled = true;
+                ctx.thinking.budget_tokens = Some(tokens);
+                Ok(CommandResult {
+                    command: "thinking".into(),
+                    output: format!("Thinking enabled with budget of {} tokens.", tokens),
+                    data: Some(serde_json::json!({ "thinking_enabled": true, "budget_tokens": tokens })),
+                })
+            }
+            "effort" => {
+                let effort = parts.get(1).ok_or_else(|| {
+                    BimoError::Command("usage: /thinking effort <low|medium|high>".into())
+                })?;
+                if !matches!(*effort, "low" | "medium" | "high") {
+                    return Err(BimoError::Command(
+                        "reasoning effort must be low, medium, or high".into(),
+                    ));
+                }
+                ctx.thinking.enabled = true;
+                ctx.thinking.reasoning_effort = Some(effort.to_string());
+                Ok(CommandResult {
+                    command: "thinking".into(),
+                    output: format!("Thinking enabled with reasoning effort: {}.", effort),
+                    data: Some(serde_json::json!({ "thinking_enabled": true, "reasoning_effort": effort })),
+                })
+            }
+            _ => Err(BimoError::Command(format!(
+                "unknown subcommand '{}'. Usage: /thinking [on|off|budget <tokens>|effort <low|medium|high>]",
+                parts[0]
+            ))),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1056,6 +1154,7 @@ mod tests {
             has_runtime: true,
             tree_fork_index: None,
             tree_revert_index: None,
+            thinking: ThinkingConfig::default(),
         }
     }
 
@@ -1325,6 +1424,77 @@ mod tests {
             timestamp: Utc::now(),
         }];
         let result = reg.dispatch("/tree fork 5", &mut ctx);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn thinking_command_status_off_by_default() {
+        let reg = CommandRegistry::new();
+        let mut ctx = make_context();
+        let result = reg.dispatch("/thinking", &mut ctx).unwrap();
+        assert!(result.output.contains("OFF"));
+    }
+
+    #[test]
+    fn thinking_command_turn_on() {
+        let reg = CommandRegistry::new();
+        let mut ctx = make_context();
+        let result = reg.dispatch("/thinking on", &mut ctx).unwrap();
+        assert!(result.output.contains("enabled"));
+        assert!(ctx.thinking.enabled);
+    }
+
+    #[test]
+    fn thinking_command_turn_off() {
+        let reg = CommandRegistry::new();
+        let mut ctx = make_context();
+        ctx.thinking.enabled = true;
+        let result = reg.dispatch("/thinking off", &mut ctx).unwrap();
+        assert!(result.output.contains("disabled"));
+        assert!(!ctx.thinking.enabled);
+    }
+
+    #[test]
+    fn thinking_command_budget() {
+        let reg = CommandRegistry::new();
+        let mut ctx = make_context();
+        let result = reg.dispatch("/thinking budget 15000", &mut ctx).unwrap();
+        assert!(result.output.contains("15000"));
+        assert!(ctx.thinking.enabled);
+        assert_eq!(ctx.thinking.budget_tokens, Some(15000));
+    }
+
+    #[test]
+    fn thinking_command_effort() {
+        let reg = CommandRegistry::new();
+        let mut ctx = make_context();
+        let result = reg.dispatch("/thinking effort high", &mut ctx).unwrap();
+        assert!(result.output.contains("high"));
+        assert!(ctx.thinking.enabled);
+        assert_eq!(ctx.thinking.reasoning_effort.as_deref(), Some("high"));
+    }
+
+    #[test]
+    fn thinking_command_effort_invalid() {
+        let reg = CommandRegistry::new();
+        let mut ctx = make_context();
+        let result = reg.dispatch("/thinking effort extreme", &mut ctx);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn thinking_command_budget_invalid() {
+        let reg = CommandRegistry::new();
+        let mut ctx = make_context();
+        let result = reg.dispatch("/thinking budget abc", &mut ctx);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn thinking_command_unknown_subcommand() {
+        let reg = CommandRegistry::new();
+        let mut ctx = make_context();
+        let result = reg.dispatch("/thinking foobar", &mut ctx);
         assert!(result.is_err());
     }
 }
