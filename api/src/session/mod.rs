@@ -365,4 +365,42 @@ mod tests {
         let deserialized: SessionInfo = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.id, info.id);
     }
+
+    #[test]
+    fn delete_saved_removes_session_from_disk() {
+        let mut session = Session::new();
+        session.add_user_message("to be deleted");
+        session.save().unwrap();
+
+        let id = session.id.clone();
+        assert!(Session::load(&id).is_ok());
+
+        Session::delete_saved(&id).unwrap();
+        assert!(Session::load(&id).is_err());
+    }
+
+    #[test]
+    fn delete_saved_unknown_id_returns_error() {
+        let result = Session::delete_saved("nonexistent-session-id");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn delete_saved_only_removes_target_session() {
+        let mut s1 = Session::new();
+        s1.add_user_message("first");
+        s1.save().unwrap();
+
+        let mut s2 = Session::new();
+        s2.add_user_message("second");
+        s2.save().unwrap();
+
+        Session::delete_saved(&s1.id).unwrap();
+
+        assert!(Session::load(&s1.id).is_err());
+        assert!(Session::load(&s2.id).is_ok());
+
+        // cleanup
+        let _ = Session::delete_saved(&s2.id);
+    }
 }
