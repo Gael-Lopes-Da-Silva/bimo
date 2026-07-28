@@ -607,12 +607,11 @@ fn build_project_context(cwd: &str) -> String {
         .args(["rev-parse", "--abbrev-ref", "HEAD"])
         .current_dir(cwd)
         .output()
+        && out.status.success()
     {
-        if out.status.success() {
-            let branch = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            if !branch.is_empty() {
-                parts.push(format!("Git branch: {branch}"));
-            }
+        let branch = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if !branch.is_empty() {
+            parts.push(format!("Git branch: {branch}"));
         }
     }
 

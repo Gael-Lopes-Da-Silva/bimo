@@ -2,9 +2,13 @@ use axum::{
     Router,
     extract::{Json, State},
     http::StatusCode,
+    response::Response,
     routing::{get, post},
 };
 use bimo_api::api::*;
+use bimo_api::provider;
+use bimo_api::tool;
+use futures_util::StreamExt;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tower_http::cors::{Any, CorsLayer};
@@ -37,6 +41,7 @@ async fn main() {
         .route("/api/model/list", get(list_models))
         .route("/api/model/select", post(select_model))
         .route("/api/chat", post(chat))
+        .route("/api/chat/stream", post(chat_stream))
         .route("/api/session", get(get_session))
         .route("/api/session/clear", post(clear_session))
         .route("/api/command", post(execute_command))
@@ -146,6 +151,144 @@ async fn chat(
     let resp = api.chat(req).await;
     tracing::info!(success = resp.success, "POST /api/chat -> done");
     api_response_to_http(resp)
+}
+
+async fn chat_stream(State(state): State<AppState>, Json(req): Json<ChatRequest>) -> Response {
+    tracing::info!(message_len = req.message.len(), "POST /api/chat/stream");
+
+    let (tx, mut rx) =
+        tokio::sync::mpsc::channel::<Result<ChatStreamEvent, bimo_api::BimoError>>(64);
+
+    tokio::spawn(async move {
+        let result = run_chat_stream(state, &req.message, &tx).await;
+        if let Err(e) = result {
+            let _ = tx
+                .send(Ok(ChatStreamEvent::Error {
+                    message: e.to_string(),
+                }))
+                .await;
+        }
+    });
+
+    let stream = async_stream::stream! {
+        while let Some(msg) = rx.recv().await {
+            match msg {
+                Ok(event) => {
+                    let data = match serde_json::to_string(&event) {
+                        Ok(d) => d,
+                        Err(_) => continue,
+                    };
+                    yield Ok::<_, std::convert::Infallible>(format!("data: {data}\n\n"));
+                }
+                Err(_) => break,
+            }
+        }
+    };
+
+    let pinned = Box::pin(stream);
+
+    Response::builder()
+        .header("Content-Type", "text/event-stream")
+        .header("Cache-Control", "no-cache")
+        .header("Connection", "keep-alive")
+        .body(axum::body::Body::from_stream(pinned))
+        .unwrap()
+}
+
+/// Runs the agent tool-calling loop, sending streaming events through `tx`.
+async fn run_chat_stream(
+    state: AppState,
+    user_message: &str,
+    tx: &tokio::sync::mpsc::Sender<Result<ChatStreamEvent, bimo_api::BimoError>>,
+) -> bimo_api::Result<()> {
+    const MAX_TOOL_ITERATIONS: usize = 20;
+
+    let mut first = true;
+
+    for iteration in 0..=MAX_TOOL_ITERATIONS {
+        {
+            let mut api = state.lock().await;
+            let runtime = api
+                .agent
+                .runtime
+                .as_ref()
+                .ok_or_else(|| bimo_api::BimoError::Provider("no provider selected".into()))?
+                .clone();
+            let model_id = api
+                .agent
+                .config
+                .selected_model
+                .clone()
+                .ok_or_else(|| bimo_api::BimoError::Model("no model selected".into()))?;
+            let thinking = api.agent.config.thinking.clone();
+
+            if first {
+                api.agent.session.add_user_message(user_message);
+                first = false;
+            }
+
+            let messages = api.agent.session.to_chat_messages();
+            let mut stream = Box::pin(
+                provider::chat_completion_streaming(&runtime, &messages, &model_id, &thinking)
+                    .await?,
+            );
+
+            let mut content = String::new();
+
+            while let Some(chunk_result) = stream.next().await {
+                match chunk_result {
+                    Ok(chunk) => {
+                        if let Some(delta) =
+                            provider::extract_stream_delta(&chunk, &runtime.request_body_format)
+                        {
+                            content.push_str(&delta);
+                            let _ = tx.try_send(Ok(ChatStreamEvent::Content {
+                                delta: delta.clone(),
+                            }));
+                        }
+                    }
+                    Err(e) => {
+                        let _ = tx.try_send(Err(e));
+                        return Ok(());
+                    }
+                }
+            }
+
+            let tool_calls = tool::call::parse_tool_calls(&content);
+
+            if tool_calls.is_empty() || iteration == MAX_TOOL_ITERATIONS {
+                let sid = api.agent.session.id.clone();
+                api.agent.session.add_assistant_message(&content);
+                let _ = tx.try_send(Ok(ChatStreamEvent::Done {
+                    model: Some(model_id),
+                    usage: None,
+                    session_id: sid,
+                }));
+                return Ok(());
+            }
+
+            api.agent.session.add_assistant_message(&content);
+
+            for call in &tool_calls {
+                let _ = tx.try_send(Ok(ChatStreamEvent::ToolStart {
+                    tool: call.name.clone(),
+                    args: serde_json::to_value(&call.arguments).ok(),
+                }));
+
+                let result = tool::call::execute_tool_call(call, &api.agent.tool_registry).await;
+
+                let _ = tx.try_send(Ok(ChatStreamEvent::ToolResult {
+                    tool: result.name.clone(),
+                    is_error: result.is_error,
+                }));
+
+                let result_msg = tool::call::format_tool_result_message(&result);
+                api.agent.session.add_tool_message(&result_msg);
+            }
+        }
+    }
+
+    Ok(())
 }
 
 async fn get_session(State(state): State<AppState>) -> Json<ApiResponse> {

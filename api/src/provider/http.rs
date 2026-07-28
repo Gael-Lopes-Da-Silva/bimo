@@ -1,5 +1,6 @@
 use crate::config::ThinkingConfig;
 use crate::error::{BimoError, Result};
+use futures_util::StreamExt;
 use reqwest::Client;
 use tracing;
 
@@ -203,6 +204,134 @@ pub async fn chat_completion(
         "chat completion done"
     );
     Ok(result)
+}
+
+/// Send a streaming chat completion request. Returns a stream of raw JSON
+/// chunks (one per SSE `data:` line). The caller is responsible for parsing
+/// content deltas out of each chunk according to the provider format.
+pub async fn chat_completion_streaming(
+    runtime: &ProviderRuntime,
+    messages: &[ChatMessage],
+    model: &str,
+    thinking: &ThinkingConfig,
+) -> Result<
+    impl futures_util::Stream<Item = std::result::Result<serde_json::Value, BimoError>> + use<>,
+> {
+    let client = Client::new();
+    let url = format!(
+        "{}{}",
+        runtime.base_url.trim_end_matches('/'),
+        runtime.chat_endpoint
+    );
+
+    tracing::debug!(provider = %runtime.id, model, url = %url, "sending streaming chat request");
+    let mut body = build_request_body(runtime, messages, model, thinking)?;
+
+    // Force streaming on
+    if let Some(obj) = body.as_object_mut() {
+        obj.insert("stream".into(), serde_json::json!(true));
+    }
+
+    let mut req = client.post(&url).json(&body);
+    req = apply_auth(req, runtime)?;
+
+    let resp = req.send().await.map_err(|e| {
+        tracing::error!(provider = %runtime.id, error = %e, "streaming chat request failed");
+        BimoError::Network(format!(
+            "streaming chat request to {} failed: {e}",
+            runtime.id
+        ))
+    })?;
+
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        tracing::error!(provider = %runtime.id, status = %status, body = %body, "streaming chat failed");
+        return Err(BimoError::Provider(format!(
+            "streaming chat failed ({}): {}",
+            status, body
+        )));
+    }
+
+    let provider_id = runtime.id.clone();
+    let stream = async_stream::stream! {
+        let mut buffer = String::new();
+        let mut bytes_stream = resp.bytes_stream();
+
+        while let Some(chunk_result) = bytes_stream.next().await {
+            let chunk = match chunk_result {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::error!(provider = %provider_id, error = %e, "stream chunk read error");
+                    yield Err(BimoError::Network(format!("stream read error: {e}")));
+                    return;
+                }
+            };
+
+            buffer.push_str(&String::from_utf8_lossy(&chunk));
+
+            while let Some(newline_pos) = buffer.find('\n') {
+                let line = buffer[..newline_pos].trim().to_string();
+                buffer = buffer[newline_pos + 1..].to_string();
+
+                if let Some(data) = line.strip_prefix("data: ") {
+                    let data = data.trim();
+                    if data == "[DONE]" {
+                        tracing::debug!(provider = %provider_id, "stream [DONE] received");
+                        return;
+                    }
+                    match serde_json::from_str::<serde_json::Value>(data) {
+                        Ok(val) => yield Ok(val),
+                        Err(e) => {
+                            tracing::warn!(provider = %provider_id, error = %e, data = %data, "failed to parse stream chunk");
+                        }
+                    }
+                }
+            }
+        }
+
+        tracing::debug!(provider = %provider_id, "stream ended");
+    };
+
+    Ok(stream)
+}
+
+/// Extract text content deltas from a streaming chunk, handling OpenAI,
+/// Anthropic, and Ollama formats.
+pub fn extract_stream_delta(
+    chunk: &serde_json::Value,
+    format: &RequestBodyFormat,
+) -> Option<String> {
+    match format {
+        RequestBodyFormat::OpenAi => {
+            // OpenAI: { choices: [{ delta: { content: "..." } }] }
+            chunk
+                .get("choices")?
+                .as_array()?
+                .first()?
+                .get("delta")?
+                .get("content")?
+                .as_str()
+                .map(String::from)
+        }
+        RequestBodyFormat::Anthropic => {
+            // Anthropic: { type: "content_block_delta", delta: { text: "..." } }
+            let type_str = chunk.get("type")?.as_str()?;
+            if type_str == "content_block_delta" {
+                chunk.get("delta")?.get("text")?.as_str().map(String::from)
+            } else {
+                None
+            }
+        }
+        RequestBodyFormat::Ollama => {
+            // Ollama: { message: { content: "..." } }
+            chunk
+                .get("message")?
+                .get("content")?
+                .as_str()
+                .map(String::from)
+        }
+    }
 }
 
 fn build_request_body(

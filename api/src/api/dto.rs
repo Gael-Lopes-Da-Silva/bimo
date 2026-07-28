@@ -158,6 +158,43 @@ pub struct ThinkingData {
     pub reasoning_effort: Option<String>,
 }
 
+// ---------------------------------------------------------------------------
+// Streaming events
+// ---------------------------------------------------------------------------
+
+/// Events emitted over SSE during a streaming chat response.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "type")]
+pub enum ChatStreamEvent {
+    /// A chunk of text content from the LLM.
+    #[serde(rename = "content")]
+    Content { delta: String },
+
+    /// The LLM produced tool calls — they are now being executed.
+    #[serde(rename = "tool_start")]
+    ToolStart {
+        tool: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        args: Option<serde_json::Value>,
+    },
+
+    /// A tool call finished executing.
+    #[serde(rename = "tool_result")]
+    ToolResult { tool: String, is_error: bool },
+
+    /// The final metadata emitted once the LLM finishes (no more tool calls).
+    #[serde(rename = "done")]
+    Done {
+        model: Option<String>,
+        usage: Option<UsageInfo>,
+        session_id: String,
+    },
+
+    /// An error occurred.
+    #[serde(rename = "error")]
+    Error { message: String },
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

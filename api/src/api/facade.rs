@@ -12,7 +12,7 @@ use tracing;
 
 /// The top-level API object. Wrap this in any transport (HTTP, gRPC, stdin, etc.).
 pub struct BimoApi {
-    pub(crate) agent: Agent,
+    pub agent: Agent,
 }
 
 impl Default for BimoApi {
