@@ -13,10 +13,15 @@ jobs:
   check:
     name: Check & Lint
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: api
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: api
       - run: cargo check --all-targets
       - run: cargo fmt --all -- --check
       - run: cargo clippy -- -D warnings
@@ -24,8 +29,13 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: api
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: api
       - run: cargo test --all-targets
