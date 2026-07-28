@@ -48,10 +48,22 @@ impl Agent {
         let tool_registry = ToolRegistry::new();
         let mut session = Session::new();
 
-        // Inject system prompt with tool descriptions
+        // Inject system prompt with tool descriptions and context
         let tool_xml = tool_registry.render_tool_xml();
-        let system_prompt =
-            prompts::render(&prompts::load(prompts::SYSTEM), &[("TOOLS", &tool_xml)]);
+        let now = chrono::Local::now().format("%Y-%m-%d").to_string();
+        let cwd = std::env::current_dir()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|_| "<unknown>".into());
+        let project_context = build_project_context(&cwd);
+        let system_prompt = prompts::render(
+            &prompts::load(prompts::SYSTEM),
+            &[
+                ("TOOLS", &tool_xml),
+                ("DATE", &now),
+                ("CWD", &cwd),
+                ("PROJECT_CONTEXT", &project_context),
+            ],
+        );
         session.add_system_message(&system_prompt);
         tracing::debug!(prompt_len = system_prompt.len(), "system prompt injected");
 
@@ -582,5 +594,50 @@ impl Agent {
         self.config.selected_provider = ctx.selected_provider.clone();
         self.config.selected_model = ctx.selected_model.clone();
         self.config.thinking = ctx.thinking.clone();
+    }
+}
+
+/// Build a short project context string for the system prompt.
+/// Includes git branch (if available) and top-level directory listing.
+fn build_project_context(cwd: &str) -> String {
+    let mut parts: Vec<String> = Vec::new();
+
+    // Git branch
+    if let Ok(out) = std::process::Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .current_dir(cwd)
+        .output()
+    {
+        if out.status.success() {
+            let branch = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if !branch.is_empty() {
+                parts.push(format!("Git branch: {branch}"));
+            }
+        }
+    }
+
+    // Top-level directory listing
+    if let Ok(entries) = std::fs::read_dir(cwd) {
+        let mut names: Vec<String> = entries
+            .filter_map(|e| e.ok())
+            .map(|e| {
+                let name = e.file_name().to_string_lossy().to_string();
+                if e.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                    format!("{name}/")
+                } else {
+                    name
+                }
+            })
+            .collect();
+        names.sort();
+        if !names.is_empty() {
+            parts.push(format!("Project files: {}", names.join(", ")));
+        }
+    }
+
+    if parts.is_empty() {
+        "No project context available.".into()
+    } else {
+        parts.join("\n")
     }
 }

@@ -127,4 +127,22 @@ mod tests {
         let template = load(SYSTEM);
         assert!(template.contains("{{TOOLS}}"));
     }
+
+    #[test]
+    fn system_prompt_has_date_placeholder() {
+        let template = load(SYSTEM);
+        assert!(template.contains("{{DATE}}"));
+    }
+
+    #[test]
+    fn system_prompt_has_cwd_placeholder() {
+        let template = load(SYSTEM);
+        assert!(template.contains("{{CWD}}"));
+    }
+
+    #[test]
+    fn system_prompt_has_project_context_placeholder() {
+        let template = load(SYSTEM);
+        assert!(template.contains("{{PROJECT_CONTEXT}}"));
+    }
 }
