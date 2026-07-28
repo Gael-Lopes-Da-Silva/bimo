@@ -1,5 +1,4 @@
 use crate::error::{BimoError, Result};
-use crate::prompts;
 use crate::session::SessionInfo;
 use crate::tools::Tool;
 use serde::{Deserialize, Serialize};
@@ -101,6 +100,9 @@ pub struct CommandContext {
 
     // Tools
     pub tools: Vec<Tool>,
+
+    // Commands for auto-generated help
+    pub command_descriptions: Vec<(String, String)>,
 
     // Session management
     pub saved_sessions: Vec<SessionInfo>,
@@ -288,8 +290,10 @@ impl SlashCommand for HelpCommand {
     }
 
     fn execute(&self, ctx: &mut CommandContext, _args: &str) -> Result<CommandResult> {
-        let _ = ctx;
-        let output = prompts::load(prompts::HELP);
+        let mut output = String::from("Available commands:\n\n");
+        for (name, desc) in &ctx.command_descriptions {
+            output.push_str(&format!("  /{:<16} {}\n", name, desc));
+        }
         Ok(CommandResult {
             command: "help".into(),
             output: output.trim().into(),
@@ -1043,6 +1047,10 @@ mod tests {
                     parameter_type: "string".into(),
                 }],
             }],
+            command_descriptions: vec![
+                ("help".into(), "list all available commands".into()),
+                ("status".into(), "show current provider and model".into()),
+            ],
             saved_sessions: vec![],
             compact_requested: false,
             has_runtime: true,

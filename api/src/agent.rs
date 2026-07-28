@@ -546,6 +546,12 @@ impl Agent {
     fn build_command_context(&self) -> CommandContext {
         let providers = self.provider_registry.list_all(&self.config);
         let saved_sessions = Session::list_saved().unwrap_or_default();
+        let command_descriptions: Vec<(String, String)> = self
+            .command_registry
+            .list_detailed()
+            .iter()
+            .map(|c| (c.name.clone(), c.description.clone()))
+            .collect();
         CommandContext {
             selected_provider: self.config.selected_provider.clone(),
             selected_model: self.config.selected_model.clone(),
@@ -557,6 +563,7 @@ impl Agent {
             provider_names: providers.iter().map(|p| p.name.clone()).collect(),
             needs_configuration: self.needs_configuration(),
             tools: self.tool_registry.list().to_vec(),
+            command_descriptions,
             saved_sessions,
             compact_requested: false,
             has_runtime: self.runtime.is_some(),

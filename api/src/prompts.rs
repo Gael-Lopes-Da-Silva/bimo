@@ -4,13 +4,11 @@ use std::path::PathBuf;
 /// Prompt file names.
 pub const COMPACT: &str = "COMPACT.md";
 pub const COMPACT_PREFIX: &str = "COMPACT_PREFIX.md";
-pub const HELP: &str = "HELP.md";
 pub const SYSTEM: &str = "SYSTEM.md";
 
 /// Compile-time fallback content embedded from the prompts/ directory.
 const COMPACT_DEFAULT: &str = include_str!("../prompts/COMPACT.md");
 const COMPACT_PREFIX_DEFAULT: &str = include_str!("../prompts/COMPACT_PREFIX.md");
-const HELP_DEFAULT: &str = include_str!("../prompts/HELP.md");
 const SYSTEM_DEFAULT: &str = include_str!("../prompts/SYSTEM.md");
 
 /// Resolve the prompts directory. Checks, in order:
@@ -58,7 +56,6 @@ pub fn load(name: &str) -> String {
     match name {
         COMPACT => COMPACT_DEFAULT.to_string(),
         COMPACT_PREFIX => COMPACT_PREFIX_DEFAULT.to_string(),
-        HELP => HELP_DEFAULT.to_string(),
         SYSTEM => SYSTEM_DEFAULT.to_string(),
         _ => String::new(),
     }
@@ -86,10 +83,6 @@ mod tests {
         let prefix = load(COMPACT_PREFIX);
         assert!(!prefix.is_empty());
         assert!(prefix.contains("Previous conversation summary"));
-
-        let help = load(HELP);
-        assert!(!help.is_empty());
-        assert!(help.contains("/help"));
 
         let system = load(SYSTEM);
         assert!(!system.is_empty());
