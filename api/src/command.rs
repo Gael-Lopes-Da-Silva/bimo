@@ -1,4 +1,5 @@
 use crate::error::{BimoError, Result};
+use crate::prompts;
 use crate::session::SessionInfo;
 use crate::tools::Tool;
 use serde::{Deserialize, Serialize};
@@ -288,19 +289,7 @@ impl SlashCommand for HelpCommand {
 
     fn execute(&self, ctx: &mut CommandContext, _args: &str) -> Result<CommandResult> {
         let _ = ctx;
-        let output = "\
-Available commands:
-
-  /help       — list all available commands
-  /status     — show current provider, model, and session info
-  /provider   — list providers, select, or configure a provider
-  /model      — list models, or select a model
-  /clear      — clear the current conversation session
-  /tools      — list all available agent tools
-  /session    — manage sessions (list, save, resume, delete, info)
-  /tree       — view conversation tree, fork or revert to a point
-  /compact    — compact the session context into a summary
-";
+        let output = prompts::load(prompts::HELP);
         Ok(CommandResult {
             command: "help".into(),
             output: output.trim().into(),

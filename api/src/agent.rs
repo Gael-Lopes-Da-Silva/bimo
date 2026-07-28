@@ -2,6 +2,7 @@ use crate::command::{CommandContext, CommandRegistry, CommandResult};
 use crate::config::{AppConfig, CustomProviderConfig, ProviderPersistedConfig};
 use crate::error::{BimoError, Result};
 use crate::model::{self, ModelInfo};
+use crate::prompts;
 use crate::provider::{self, ProviderInfo, ProviderRegistry, ProviderRuntime, UsageInfo};
 use crate::session::Session;
 use crate::tools::ToolRegistry;
@@ -410,13 +411,8 @@ impl Agent {
             })
             .collect();
 
-        let prompt = format!(
-            "Summarize the following conversation concisely, preserving all key information, \
-             decisions, code snippets, file paths, and important context. The summary will be \
-             used as context for continuing the conversation.\n\n\
-             Conversation:\n{}",
-            conversation.join("\n\n")
-        );
+        let prompt_template = prompts::load(prompts::COMPACT);
+        let prompt = prompts::render(&prompt_template, &[("CONVERSATION", &conversation.join("\n\n"))]);
 
         tracing::debug!(prompt_len = prompt.len(), "sending summarization request");
         let messages = vec![provider::ChatMessage {

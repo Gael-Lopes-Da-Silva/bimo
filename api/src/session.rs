@@ -1,4 +1,5 @@
 use crate::error::{BimoError, Result};
+use crate::prompts;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -279,7 +280,10 @@ impl Session {
 
         self.messages.push(Message {
             role: Role::System,
-            content: format!("Previous conversation summary:\n{summary}"),
+            content: prompts::render(
+                &prompts::load(prompts::COMPACT_PREFIX),
+                &[("SUMMARY", summary)],
+            ),
             timestamp: Utc::now(),
         });
 
