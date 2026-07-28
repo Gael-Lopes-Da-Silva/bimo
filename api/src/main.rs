@@ -43,6 +43,8 @@ async fn main() {
         .route("/api/commands", get(list_commands))
         .route("/api/status", get(status))
         .route("/api/help", get(help))
+        .route("/api/session/context", get(get_context))
+        .route("/api/thinking", get(get_thinking))
         .layer(TraceLayer::new_for_http())
         .layer(cors)
         .with_state(state);
@@ -194,5 +196,21 @@ async fn list_commands(State(state): State<AppState>) -> Json<ApiResponse> {
     let api = state.lock().await;
     let resp = api.list_commands();
     tracing::debug!(success = resp.success, "GET /api/commands -> ok");
+    Json(resp)
+}
+
+async fn get_context(State(state): State<AppState>) -> Json<ApiResponse> {
+    tracing::debug!("GET /api/session/context");
+    let api = state.lock().await;
+    let resp = api.get_context();
+    tracing::debug!(success = resp.success, "GET /api/session/context -> ok");
+    Json(resp)
+}
+
+async fn get_thinking(State(state): State<AppState>) -> Json<ApiResponse> {
+    tracing::debug!("GET /api/thinking");
+    let api = state.lock().await;
+    let resp = api.get_thinking();
+    tracing::debug!(success = resp.success, "GET /api/thinking -> ok");
     Json(resp)
 }

@@ -1,6 +1,7 @@
 use crate::agent::Agent;
 use crate::config::CustomProviderConfig;
 use crate::error::{ApiErrorPayload, BimoError};
+use crate::session::Role;
 use serde::{Deserialize, Serialize};
 use tracing;
 
@@ -129,6 +130,34 @@ pub struct CommandHelpEntry {
 #[derive(Debug, Serialize)]
 pub struct CommandsData {
     pub commands: Vec<crate::command::CommandInfo>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ContextData {
+    pub session_id: String,
+    pub messages: Vec<ContextMessage>,
+    pub total_characters: usize,
+    pub estimated_tokens: usize,
+    pub max_context_tokens: usize,
+    pub remaining_tokens: usize,
+    pub usage_percentage: f64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ContextMessage {
+    pub role: String,
+    pub content: String,
+    pub characters: usize,
+    pub estimated_tokens: usize,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ThinkingData {
+    pub enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub budget_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -371,6 +400,127 @@ impl BimoApi {
         tracing::debug!(count = commands.len(), "list_commands done");
         ApiResponse::ok(CommandsData { commands })
     }
+
+    // -----------------------------------------------------------------------
+    // Context & thinking
+    // -----------------------------------------------------------------------
+
+    /// Return the full session context with token estimates.
+    pub fn get_context(&self) -> ApiResponse {
+        tracing::debug!("get_context called");
+        let messages: Vec<ContextMessage> = self
+            .agent
+            .session
+            .messages
+            .iter()
+            .map(|m| {
+                let chars = m.content.len();
+                let tokens = estimate_tokens(&m.content);
+                let role = match m.role {
+                    Role::System => "system",
+                    Role::User => "user",
+                    Role::Assistant => "assistant",
+                    Role::Tool => "tool",
+                };
+                ContextMessage {
+                    role: role.to_string(),
+                    content: m.content.clone(),
+                    characters: chars,
+                    estimated_tokens: tokens,
+                }
+            })
+            .collect();
+
+        let total_chars: usize = messages.iter().map(|m| m.characters).sum();
+        let total_tokens: usize = messages.iter().map(|m| m.estimated_tokens).sum();
+        let max_tokens = estimate_max_context(&self.agent.config.selected_model);
+        let remaining = max_tokens.saturating_sub(total_tokens);
+        let usage = if max_tokens > 0 {
+            (total_tokens as f64 / max_tokens as f64) * 100.0
+        } else {
+            0.0
+        };
+
+        tracing::debug!(
+            messages = messages.len(),
+            total_tokens,
+            max_tokens,
+            "get_context done"
+        );
+        ApiResponse::ok(ContextData {
+            session_id: self.agent.session.id.clone(),
+            messages,
+            total_characters: total_chars,
+            estimated_tokens: total_tokens,
+            max_context_tokens: max_tokens,
+            remaining_tokens: remaining,
+            usage_percentage: (usage * 100.0).round() / 100.0,
+        })
+    }
+
+    /// Return the current thinking configuration.
+    pub fn get_thinking(&self) -> ApiResponse {
+        tracing::debug!("get_thinking called");
+        let thinking = &self.agent.config.thinking;
+        ApiResponse::ok(ThinkingData {
+            enabled: thinking.enabled,
+            budget_tokens: thinking.budget_tokens,
+            reasoning_effort: thinking.reasoning_effort.clone(),
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Context estimation helpers
+// ---------------------------------------------------------------------------
+
+/// Rough token estimate: ~4 characters per token (common for English text).
+fn estimate_tokens(text: &str) -> usize {
+    text.len().div_ceil(4)
+}
+
+/// Estimate the max context window for a model based on its id/name.
+fn estimate_max_context(model: &Option<String>) -> usize {
+    let model_str = model.as_deref().unwrap_or("");
+    let lower = model_str.to_lowercase();
+
+    // Anthropic models
+    if lower.contains("claude") {
+        if lower.contains("opus") || lower.contains("sonnet-4") || lower.contains("3.5") {
+            return 200_000;
+        }
+        if lower.contains("haiku") {
+            return 200_000;
+        }
+        return 100_000;
+    }
+    // OpenAI models
+    if lower.contains("o3") || lower.contains("o4") {
+        return 200_000;
+    }
+    if lower.contains("o1") {
+        return 200_000;
+    }
+    if lower.contains("gpt-4o") || lower.contains("gpt-4-turbo") {
+        return 128_000;
+    }
+    if lower.contains("gpt-4") {
+        return 8_192;
+    }
+    if lower.contains("gpt-3.5") {
+        return 16_385;
+    }
+    // Gemini models
+    if lower.contains("gemini") {
+        return 1_000_000;
+    }
+    // Ollama / local models — conservative default
+    if lower.contains("llama") || lower.contains("qwen") || lower.contains("deepseek") {
+        return 128_000;
+    }
+
+    // Unknown model: assume 128k (modern default)
+    128_000
 }
 
 #[cfg(test)]
@@ -542,5 +692,93 @@ mod tests {
         assert!(session.messages[0].content.contains("Bimo"));
         assert!(session.messages[0].content.contains("read_file"));
         assert!(session.messages[0].content.contains("write_file"));
+    }
+
+    #[test]
+    fn get_context_returns_data() {
+        let mut api = BimoApi::new();
+        api.agent.session.add_user_message("hello world");
+
+        let resp = api.get_context();
+        assert!(resp.success);
+        let data = resp.data.unwrap();
+        assert!(data.get("session_id").is_some());
+        assert!(data.get("messages").is_some());
+        assert!(data.get("estimated_tokens").is_some());
+        assert!(data.get("max_context_tokens").is_some());
+        assert!(data.get("remaining_tokens").is_some());
+        assert!(data.get("usage_percentage").is_some());
+        // System message + user message
+        let messages = data["messages"].as_array().unwrap();
+        assert_eq!(messages.len(), 2);
+        // First message should be system
+        assert_eq!(messages[0]["role"], "system");
+        assert_eq!(messages[1]["role"], "user");
+    }
+
+    #[test]
+    fn get_context_token_estimates() {
+        let api = BimoApi::new();
+        let resp = api.get_context();
+        let data = resp.data.unwrap();
+        let total_tokens = data["estimated_tokens"].as_u64().unwrap();
+        let max_tokens = data["max_context_tokens"].as_u64().unwrap();
+        assert!(total_tokens > 0);
+        assert!(max_tokens > 0);
+        assert!(max_tokens >= total_tokens);
+        assert!(data["remaining_tokens"].as_u64().unwrap() > 0);
+    }
+
+    #[test]
+    fn get_thinking_returns_defaults() {
+        let api = BimoApi::new();
+        let resp = api.get_thinking();
+        assert!(resp.success);
+        let data = resp.data.unwrap();
+        assert_eq!(data["enabled"], false);
+        // budget_tokens and reasoning_effort are None (skipped in serialization)
+        assert!(data.get("budget_tokens").is_none() || data["budget_tokens"].is_null());
+        assert!(data.get("reasoning_effort").is_none() || data["reasoning_effort"].is_null());
+    }
+
+    #[test]
+    fn get_thinking_after_toggle() {
+        let mut api = BimoApi::new();
+        api.agent.config.thinking.enabled = true;
+        api.agent.config.thinking.reasoning_effort = Some("high".into());
+
+        let resp = api.get_thinking();
+        let data = resp.data.unwrap();
+        assert_eq!(data["enabled"], true);
+        assert_eq!(data["reasoning_effort"], "high");
+    }
+
+    #[test]
+    fn estimate_tokens_basic() {
+        // ~4 chars per token
+        assert_eq!(estimate_tokens(""), 0);
+        assert_eq!(estimate_tokens("ab"), 1);
+        assert_eq!(estimate_tokens("abcdefgh"), 2);
+        assert_eq!(estimate_tokens("hello world"), 3);
+    }
+
+    #[test]
+    fn estimate_max_context_models() {
+        assert_eq!(estimate_max_context(&Some("gpt-4".into())), 8_192);
+        assert_eq!(estimate_max_context(&Some("gpt-4o".into())), 128_000);
+        assert_eq!(
+            estimate_max_context(&Some("claude-sonnet-4-20250514".into())),
+            200_000
+        );
+        assert_eq!(estimate_max_context(&Some("o3-mini".into())), 200_000);
+        assert_eq!(
+            estimate_max_context(&Some("gemini-2.5-pro".into())),
+            1_000_000
+        );
+        assert_eq!(estimate_max_context(&Some("llama3".into())), 128_000);
+        // Unknown model defaults to 128k
+        assert_eq!(estimate_max_context(&Some("mystery-model".into())), 128_000);
+        // No model selected
+        assert_eq!(estimate_max_context(&None), 128_000);
     }
 }
