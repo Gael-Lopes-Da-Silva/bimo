@@ -63,14 +63,14 @@ pub struct CustomProviderConfig {
 }
 
 impl AppConfig {
-    /// Returns the configuration directory path (`~/.bimo`).
+    /// Returns the configuration directory path (`~/.config/bimo`).
     fn config_dir() -> Result<PathBuf> {
         let home = dirs::home_dir()
             .ok_or_else(|| BimoError::Config("cannot determine home directory".into()))?;
-        Ok(home.join(".bimo"))
+        Ok(home.join(".config").join("bimo"))
     }
 
-    /// Returns the path to the config file (`~/.bimo/config.json`).
+    /// Returns the path to the config file (`~/.config/bimo/config.json`).
     fn config_path() -> Result<PathBuf> {
         Ok(Self::config_dir()?.join("config.json"))
     }

@@ -5,11 +5,11 @@ use std::path::PathBuf;
 use tracing;
 
 impl Session {
-    /// Returns the sessions directory (`~/.bimo/sessions/`).
+    /// Returns the sessions directory (`~/.config/bimo/sessions/`).
     fn sessions_dir() -> Result<PathBuf> {
         let home = dirs::home_dir()
             .ok_or_else(|| BimoError::Session("cannot determine home directory".into()))?;
-        let dir = home.join(".bimo").join("sessions");
+        let dir = home.join(".config").join("bimo").join("sessions");
         fs::create_dir_all(&dir)
             .map_err(|e| BimoError::Session(format!("failed to create sessions dir: {e}")))?;
         Ok(dir)
