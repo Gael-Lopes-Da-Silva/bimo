@@ -889,7 +889,7 @@ mod tests {
 
     #[test]
     fn list_sessions_returns_all() {
-        let mut api = BimoApi::new();
+        let api = BimoApi::new();
         let resp = api.list_sessions();
         assert!(resp.success);
         let data = resp.data.unwrap();
@@ -945,7 +945,7 @@ mod tests {
 
     #[test]
     fn get_session_by_id_returns_session() {
-        let mut api = BimoApi::new();
+        let api = BimoApi::new();
         let id = api.agent.session.id.clone();
         let resp = api.get_session_by_id(&id);
         assert!(resp.success);

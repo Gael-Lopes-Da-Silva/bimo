@@ -152,7 +152,6 @@ mod tests {
     #[test]
     fn set_active() {
         let s1 = make_session("first");
-        let id1 = s1.id.clone();
         let mut mgr = SessionManager::new(s1);
 
         let s2 = make_session("second");
@@ -203,7 +202,6 @@ mod tests {
     #[test]
     fn list_sorted_by_updated_at() {
         let mut mgr = SessionManager::new(make_session("first"));
-        let s2 = mgr.active().unwrap().clone();
         let mut new_session = Session::new();
         new_session.add_user_message("second");
         // Ensure different timestamp
@@ -225,7 +223,7 @@ mod tests {
 
     #[test]
     fn save_all_persists_to_disk() {
-        let mut mgr = SessionManager::new(make_session("test-save"));
+        let mgr = SessionManager::new(make_session("test-save"));
         let id = mgr.active_id().to_string();
         mgr.save_all().unwrap();
         let loaded = Session::load(&id).unwrap();
