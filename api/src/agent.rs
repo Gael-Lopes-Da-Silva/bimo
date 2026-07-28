@@ -275,7 +275,9 @@ impl Agent {
         // Tool calling loop
         for iteration in 0..=MAX_TOOL_ITERATIONS {
             let messages = self.session.to_chat_messages();
-            let response = provider::chat_completion(&runtime, &messages, model, &self.config.thinking).await?;
+            let response =
+                provider::chat_completion(&runtime, &messages, model, &self.config.thinking)
+                    .await?;
 
             // Parse tool calls from the response
             let tool_calls = tool_call::parse_tool_calls(&response.content);
@@ -480,7 +482,9 @@ impl Agent {
             content: prompt,
         }];
 
-        let response = provider::chat_completion(&runtime, &messages, model, &ThinkingConfig::default()).await?;
+        let response =
+            provider::chat_completion(&runtime, &messages, model, &ThinkingConfig::default())
+                .await?;
         tracing::debug!(
             summary_len = response.content.len(),
             "compaction summary received"

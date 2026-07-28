@@ -864,7 +864,8 @@ mod tests {
             content: "hello".into(),
         }];
 
-        let body = build_request_body(&runtime, &messages, "gpt-4", &ThinkingConfig::default()).unwrap();
+        let body =
+            build_request_body(&runtime, &messages, "gpt-4", &ThinkingConfig::default()).unwrap();
         assert_eq!(body["model"], "gpt-4");
         assert!(body["messages"].is_array());
         assert_eq!(body["messages"][0]["role"], "user");
@@ -884,7 +885,8 @@ mod tests {
         };
 
         let messages = vec![];
-        let body = build_request_body(&runtime, &messages, "llama3", &ThinkingConfig::default()).unwrap();
+        let body =
+            build_request_body(&runtime, &messages, "llama3", &ThinkingConfig::default()).unwrap();
         assert_eq!(body["stream"], false);
     }
 
@@ -1045,7 +1047,8 @@ mod tests {
             budget_tokens: Some(5000),
             reasoning_effort: None,
         };
-        let body = build_request_body(&runtime, &messages, "claude-sonnet-4-20250514", &thinking).unwrap();
+        let body =
+            build_request_body(&runtime, &messages, "claude-sonnet-4-20250514", &thinking).unwrap();
         assert_eq!(body["thinking"]["type"], "enabled");
         assert_eq!(body["thinking"]["budget_tokens"], 5000);
     }

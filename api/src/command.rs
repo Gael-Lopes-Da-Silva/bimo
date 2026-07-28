@@ -1,7 +1,7 @@
+use crate::config::ThinkingConfig;
 use crate::error::{BimoError, Result};
 use crate::session::SessionInfo;
 use crate::tools::Tool;
-use crate::config::ThinkingConfig;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing;
@@ -1078,15 +1078,22 @@ impl SlashCommand for ThinkingCommand {
                 })
             }
             "budget" => {
-                let tokens = parts.get(1).and_then(|s| s.parse::<u32>().ok()).ok_or_else(
-                    || BimoError::Command("usage: /thinking budget <tokens> (e.g. /thinking budget 10000)".into()),
-                )?;
+                let tokens = parts
+                    .get(1)
+                    .and_then(|s| s.parse::<u32>().ok())
+                    .ok_or_else(|| {
+                        BimoError::Command(
+                            "usage: /thinking budget <tokens> (e.g. /thinking budget 10000)".into(),
+                        )
+                    })?;
                 ctx.thinking.enabled = true;
                 ctx.thinking.budget_tokens = Some(tokens);
                 Ok(CommandResult {
                     command: "thinking".into(),
                     output: format!("Thinking enabled with budget of {} tokens.", tokens),
-                    data: Some(serde_json::json!({ "thinking_enabled": true, "budget_tokens": tokens })),
+                    data: Some(
+                        serde_json::json!({ "thinking_enabled": true, "budget_tokens": tokens }),
+                    ),
                 })
             }
             "effort" => {
@@ -1103,7 +1110,9 @@ impl SlashCommand for ThinkingCommand {
                 Ok(CommandResult {
                     command: "thinking".into(),
                     output: format!("Thinking enabled with reasoning effort: {}.", effort),
-                    data: Some(serde_json::json!({ "thinking_enabled": true, "reasoning_effort": effort })),
+                    data: Some(
+                        serde_json::json!({ "thinking_enabled": true, "reasoning_effort": effort }),
+                    ),
                 })
             }
             _ => Err(BimoError::Command(format!(
