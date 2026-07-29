@@ -110,6 +110,7 @@ pub struct StatusData {
     pub session_count: usize,
     pub message_count: usize,
     pub needs_configuration: bool,
+    pub context: crate::session::SessionContext,
 }
 
 #[derive(Debug, Serialize)]
@@ -182,6 +183,7 @@ pub struct CreateSessionData {
 pub struct SessionListData {
     pub sessions: Vec<crate::session::SessionInfo>,
     pub active_session_id: String,
+    pub context: crate::session::SessionContext,
 }
 
 // ---------------------------------------------------------------------------

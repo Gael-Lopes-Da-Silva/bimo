@@ -1,8 +1,8 @@
 use crate::agent::{Agent, build_project_context};
 use crate::config::CustomProviderConfig;
 use crate::model::{ModelInfo, lookup_known_context_window};
+use crate::session::Role;
 use crate::session::manager::SessionManager;
-use crate::session::{Role, SessionContext};
 
 use super::dto::*;
 
@@ -66,10 +66,6 @@ impl BimoApi {
             .map(|p| p.display().to_string())
             .unwrap_or_else(|_| "<unknown>".into());
         let project_context = build_project_context(&cwd);
-        new_session.context = SessionContext {
-            git_branch: project_context.git_branch,
-            agent_instructions: project_context.agent_instruction_files,
-        };
         let system_prompt = crate::prompts::render(
             &crate::prompts::load(crate::prompts::SYSTEM),
             &[
@@ -110,6 +106,7 @@ impl BimoApi {
         ApiResponse::ok(SessionListData {
             sessions,
             active_session_id: active_id,
+            context: current_session_context(),
         })
     }
 
@@ -160,7 +157,7 @@ impl BimoApi {
             session_id: target_id,
             messages: self.agent.session.messages.clone(),
             message_count,
-            context: self.agent.session.context.clone(),
+            context: current_session_context(),
         })
     }
 
@@ -188,13 +185,15 @@ impl BimoApi {
     pub fn get_session_by_id(&self, session_id: &str) -> ApiResponse {
         tracing::debug!(session_id, "get_session_by_id called");
 
+        let context = current_session_context();
+
         // Check the pool first
         if let Some(session) = self.session_manager.get(session_id) {
             let data = SessionData {
                 session_id: session.id.clone(),
                 messages: session.messages.clone(),
                 message_count: session.message_count(),
-                context: session.context.clone(),
+                context: context.clone(),
             };
             return ApiResponse::ok(data);
         }
@@ -206,7 +205,7 @@ impl BimoApi {
                     session_id: session.id.clone(),
                     messages: session.messages.clone(),
                     message_count: session.message_count(),
-                    context: session.context.clone(),
+                    context: context.clone(),
                 };
                 ApiResponse::ok(data)
             }
@@ -258,6 +257,7 @@ impl BimoApi {
         SessionListData {
             sessions: self.session_manager.list(),
             active_session_id: self.session_manager.active_id().to_string(),
+            context: current_session_context(),
         }
     }
 
@@ -397,7 +397,7 @@ impl BimoApi {
             session_id: self.agent.session.id.clone(),
             messages: self.agent.session.messages.clone(),
             message_count: self.agent.session.message_count(),
-            context: self.agent.session.context.clone(),
+            context: current_session_context(),
         };
         tracing::debug!(message_count = data.message_count, "get_session done");
         ApiResponse::ok(data)
@@ -523,6 +523,7 @@ impl BimoApi {
             session_count: self.session_manager.list().len(),
             message_count: self.agent.session.message_count(),
             needs_configuration: self.agent.needs_configuration(),
+            context: current_session_context(),
         };
         tracing::debug!(provider = ?data.provider, model = ?data.model, "status done");
         ApiResponse::ok(data)
@@ -628,6 +629,18 @@ impl BimoApi {
 // ---------------------------------------------------------------------------
 // Context estimation helpers
 // ---------------------------------------------------------------------------
+
+/// Build a SessionContext from the current project environment.
+fn current_session_context() -> crate::session::SessionContext {
+    let cwd = std::env::current_dir()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| "<unknown>".into());
+    let ctx = build_project_context(&cwd);
+    crate::session::SessionContext {
+        git_branch: ctx.git_branch,
+        agent_instructions: ctx.agent_instruction_files,
+    }
+}
 
 /// Estimate the number of tokens in text using the model's tokenizer.
 ///

@@ -42,8 +42,6 @@ pub struct Session {
     pub id: String,
     pub messages: Vec<Message>,
     pub todos: TodoList,
-    #[serde(default)]
-    pub context: SessionContext,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -53,8 +51,6 @@ pub struct Session {
 pub struct SessionInfo {
     pub id: String,
     pub message_count: usize,
-    #[serde(default)]
-    pub context: SessionContext,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -73,7 +69,6 @@ impl Session {
             id: uuid::Uuid::new_v4().to_string(),
             messages: Vec::new(),
             todos: TodoList::new(),
-            context: SessionContext::default(),
             created_at: now,
             updated_at: now,
         }
@@ -151,7 +146,6 @@ impl Session {
         SessionInfo {
             id: self.id.clone(),
             message_count: self.messages.len(),
-            context: self.context.clone(),
             created_at: self.created_at,
             updated_at: self.updated_at,
         }

@@ -5,7 +5,6 @@ use crate::model::{self, ModelInfo};
 use crate::prompts;
 use crate::provider::{self, ProviderInfo, ProviderRegistry, ProviderRuntime, UsageInfo};
 use crate::session::Session;
-use crate::session::SessionContext;
 use crate::tool::{self, ToolCall, ToolRegistry, ToolResult};
 use tracing;
 
@@ -56,10 +55,6 @@ impl Agent {
             .map(|p| p.display().to_string())
             .unwrap_or_else(|_| "<unknown>".into());
         let project_context = build_project_context(&cwd);
-        session.context = SessionContext {
-            git_branch: project_context.git_branch,
-            agent_instructions: project_context.agent_instruction_files,
-        };
         let system_prompt = prompts::render(
             &prompts::load(prompts::SYSTEM),
             &[
