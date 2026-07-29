@@ -117,6 +117,7 @@ pub struct SessionData {
     pub session_id: String,
     pub messages: Vec<crate::session::Message>,
     pub message_count: usize,
+    pub context: crate::session::SessionContext,
 }
 
 #[derive(Debug, Serialize)]

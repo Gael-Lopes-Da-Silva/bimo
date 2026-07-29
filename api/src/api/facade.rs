@@ -1,8 +1,8 @@
-use crate::agent::Agent;
+use crate::agent::{Agent, build_project_context};
 use crate::config::CustomProviderConfig;
 use crate::model::{ModelInfo, lookup_known_context_window};
-use crate::session::Role;
 use crate::session::manager::SessionManager;
+use crate::session::{Role, SessionContext};
 
 use super::dto::*;
 
@@ -65,16 +65,18 @@ impl BimoApi {
         let cwd = std::env::current_dir()
             .map(|p| p.display().to_string())
             .unwrap_or_else(|_| "<unknown>".into());
+        let project_context = build_project_context(&cwd);
+        new_session.context = SessionContext {
+            git_branch: project_context.git_branch,
+            agent_instructions: project_context.agent_instruction_files,
+        };
         let system_prompt = crate::prompts::render(
             &crate::prompts::load(crate::prompts::SYSTEM),
             &[
                 ("TOOLS", &tool_xml),
                 ("DATE", &now),
                 ("CWD", &cwd),
-                (
-                    "PROJECT_CONTEXT",
-                    &crate::agent::build_project_context(&cwd),
-                ),
+                ("PROJECT_CONTEXT", &project_context.rendered),
             ],
         );
         new_session.add_system_message(&system_prompt);
@@ -158,6 +160,7 @@ impl BimoApi {
             session_id: target_id,
             messages: self.agent.session.messages.clone(),
             message_count,
+            context: self.agent.session.context.clone(),
         })
     }
 
@@ -191,6 +194,7 @@ impl BimoApi {
                 session_id: session.id.clone(),
                 messages: session.messages.clone(),
                 message_count: session.message_count(),
+                context: session.context.clone(),
             };
             return ApiResponse::ok(data);
         }
@@ -202,6 +206,7 @@ impl BimoApi {
                     session_id: session.id.clone(),
                     messages: session.messages.clone(),
                     message_count: session.message_count(),
+                    context: session.context.clone(),
                 };
                 ApiResponse::ok(data)
             }
@@ -392,6 +397,7 @@ impl BimoApi {
             session_id: self.agent.session.id.clone(),
             messages: self.agent.session.messages.clone(),
             message_count: self.agent.session.message_count(),
+            context: self.agent.session.context.clone(),
         };
         tracing::debug!(message_count = data.message_count, "get_session done");
         ApiResponse::ok(data)

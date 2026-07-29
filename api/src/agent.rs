@@ -5,6 +5,7 @@ use crate::model::{self, ModelInfo};
 use crate::prompts;
 use crate::provider::{self, ProviderInfo, ProviderRegistry, ProviderRuntime, UsageInfo};
 use crate::session::Session;
+use crate::session::SessionContext;
 use crate::tool::{self, ToolCall, ToolRegistry, ToolResult};
 use tracing;
 
@@ -55,13 +56,17 @@ impl Agent {
             .map(|p| p.display().to_string())
             .unwrap_or_else(|_| "<unknown>".into());
         let project_context = build_project_context(&cwd);
+        session.context = SessionContext {
+            git_branch: project_context.git_branch,
+            agent_instructions: project_context.agent_instruction_files,
+        };
         let system_prompt = prompts::render(
             &prompts::load(prompts::SYSTEM),
             &[
                 ("TOOLS", &tool_xml),
                 ("DATE", &now),
                 ("CWD", &cwd),
-                ("PROJECT_CONTEXT", &project_context),
+                ("PROJECT_CONTEXT", &project_context.rendered),
             ],
         );
         session.add_system_message(&system_prompt);
@@ -645,12 +650,23 @@ impl Agent {
     }
 }
 
-/// Build a short project context string for the system prompt.
+/// Structured project context with both the rendered string and metadata.
+pub(crate) struct ProjectContext {
+    /// The rendered context string for the system prompt.
+    pub rendered: String,
+    /// The active git branch, if any.
+    pub git_branch: Option<String>,
+    /// Filenames of agent instruction files found and loaded.
+    pub agent_instruction_files: Vec<String>,
+}
+
+/// Build project context for the system prompt.
 /// Includes git branch (if available), top-level directory listing,
 /// and contents of standard agent instruction files (AGENTS.md,
 /// CLAUDE.md, GEMINI.md, .github/copilot-instructions.md).
-pub(crate) fn build_project_context(cwd: &str) -> String {
+pub(crate) fn build_project_context(cwd: &str) -> ProjectContext {
     let mut parts: Vec<String> = Vec::new();
+    let mut git_branch: Option<String> = None;
 
     // Git branch
     if let Ok(out) = std::process::Command::new("git")
@@ -661,6 +677,7 @@ pub(crate) fn build_project_context(cwd: &str) -> String {
     {
         let branch = String::from_utf8_lossy(&out.stdout).trim().to_string();
         if !branch.is_empty() {
+            git_branch = Some(branch.clone());
             parts.push(format!("Git branch: {branch}"));
         }
     }
@@ -685,20 +702,28 @@ pub(crate) fn build_project_context(cwd: &str) -> String {
     }
 
     // Agent instruction files
-    for chunk in load_agent_instructions(cwd) {
+    let (instruction_files, instruction_chunks) = load_agent_instructions(cwd);
+    for chunk in instruction_chunks {
         parts.push(chunk);
     }
 
-    if parts.is_empty() {
+    let rendered = if parts.is_empty() {
         "No project context available.".into()
     } else {
         parts.join("\n")
+    };
+
+    ProjectContext {
+        rendered,
+        git_branch,
+        agent_instruction_files: instruction_files,
     }
 }
 
 /// Read contents of standard agent instruction files from the project root.
+/// Returns (list of filenames found, list of rendered content chunks).
 /// Supports: AGENTS.md, CLAUDE.md, GEMINI.md, .github/copilot-instructions.md
-fn load_agent_instructions(cwd: &str) -> Vec<String> {
+fn load_agent_instructions(cwd: &str) -> (Vec<String>, Vec<String>) {
     const CANDIDATES: &[&str] = &[
         "AGENTS.md",
         "CLAUDE.md",
@@ -706,7 +731,8 @@ fn load_agent_instructions(cwd: &str) -> Vec<String> {
         ".github/copilot-instructions.md",
     ];
 
-    let mut instructions: Vec<String> = Vec::new();
+    let mut filenames: Vec<String> = Vec::new();
+    let mut chunks: Vec<String> = Vec::new();
 
     for &file in CANDIDATES {
         let path = std::path::Path::new(cwd).join(file);
@@ -714,11 +740,12 @@ fn load_agent_instructions(cwd: &str) -> Vec<String> {
             if let Ok(content) = std::fs::read_to_string(&path) {
                 let trimmed = content.trim().to_string();
                 if !trimmed.is_empty() {
-                    instructions.push(format!("Instructions from {file}:\n{trimmed}"));
+                    filenames.push(file.to_string());
+                    chunks.push(format!("Instructions from {file}:\n{trimmed}"));
                 }
             }
         }
     }
 
-    instructions
+    (filenames, chunks)
 }
