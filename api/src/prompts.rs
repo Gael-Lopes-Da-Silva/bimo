@@ -41,7 +41,14 @@ fn prompts_dir() -> Option<PathBuf> {
 
 /// Load a prompt file by name, returning its content as a `String`.
 /// Falls back to the compiled-in default if the file cannot be found or read.
+///
+/// For `SYSTEM.md`, also checks (in order):
+/// 1. `$BIMO_PROMPTS_DIR/SYSTEM.md` (via [`prompts_dir`])
+/// 2. `.agents/SYSTEM.md` – nearest ancestor from CWD
+/// 3. `~/.agents/SYSTEM.md`
+/// 4. Compiled-in default
 pub fn load(name: &str) -> String {
+    // 1. Prompts directory (BIMO_PROMPTS_DIR, ./prompts/, CARGO_MANIFEST_DIR/prompts/)
     if let Some(dir) = prompts_dir() {
         let path = dir.join(name);
         if let Ok(content) = fs::read_to_string(&path) {
@@ -51,6 +58,30 @@ pub fn load(name: &str) -> String {
         tracing::warn!(path = %path.display(), "failed to read prompt file, using default");
     } else {
         tracing::debug!("no prompts directory found, using compiled-in defaults");
+    }
+
+    // 2. Project-level .agents/SYSTEM.md (walk up from CWD)
+    if name == SYSTEM
+        && let Ok(cwd) = std::env::current_dir()
+    {
+        for ancestor in cwd.ancestors() {
+            let path = ancestor.join(".agents").join("SYSTEM.md");
+            if let Ok(content) = fs::read_to_string(&path) {
+                tracing::debug!(path = %path.display(), "loaded system prompt from .agents/SYSTEM.md");
+                return content;
+            }
+        }
+    }
+
+    // 3. User-level ~/.agents/SYSTEM.md
+    if name == SYSTEM
+        && let Some(home) = dirs::home_dir()
+    {
+        let path = home.join(".agents").join("SYSTEM.md");
+        if let Ok(content) = fs::read_to_string(&path) {
+            tracing::debug!(path = %path.display(), "loaded system prompt from ~/.agents/SYSTEM.md");
+            return content;
+        }
     }
 
     match name {
