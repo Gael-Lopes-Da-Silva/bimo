@@ -311,6 +311,7 @@ mod tests {
                 name: "GPT-4".into(),
                 provider_id: "openai".into(),
                 tier: None,
+                context_window: Some(8_192),
             }],
             session_id: "test-session-id".into(),
             session_message_count: 5,

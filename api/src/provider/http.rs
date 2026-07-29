@@ -72,7 +72,13 @@ fn parse_models_response(
                     let id = v.get("id")?.as_str()?.to_string();
                     let name = v.get("name").and_then(|n| n.as_str()).map(String::from);
                     let tier = infer_tier_from_pricing(&v);
-                    Some(RawModel { id, name, tier })
+                    let context_window = extract_context_window(&v);
+                    Some(RawModel {
+                        id,
+                        name,
+                        tier,
+                        context_window,
+                    })
                 })
                 .collect();
             Ok(models)
@@ -87,10 +93,12 @@ fn parse_models_response(
                 .into_iter()
                 .filter_map(|v| {
                     let id = v.get("name")?.as_str()?.to_string();
+                    let context_window = extract_context_window(&v);
                     Some(RawModel {
                         id,
                         name: None,
                         tier: None,
+                        context_window,
                     })
                 })
                 .collect();
@@ -140,6 +148,31 @@ fn infer_tier_from_pricing(model: &serde_json::Value) -> Option<String> {
     } else {
         None
     }
+}
+
+/// Extract the context window size from a model entry in a provider response.
+/// Checks common field names used by various providers.
+fn extract_context_window(model: &serde_json::Value) -> Option<u32> {
+    for key in &[
+        "context_length",
+        "max_context",
+        "context_window",
+        "max_context_length",
+    ] {
+        if let Some(val) = model.get(*key) {
+            // Try direct number
+            if let Some(n) = val.as_u64() {
+                return Some(n as u32);
+            }
+            // Try string that can be parsed as number
+            if let Some(s) = val.as_str() {
+                if let Ok(n) = s.parse::<u32>() {
+                    return Some(n);
+                }
+            }
+        }
+    }
+    None
 }
 
 fn apply_auth(

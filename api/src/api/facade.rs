@@ -1,11 +1,14 @@
 use crate::agent::Agent;
 use crate::config::CustomProviderConfig;
+use crate::model::{ModelInfo, lookup_known_context_window};
 use crate::session::Role;
 use crate::session::manager::SessionManager;
 
 use super::dto::*;
 
 use tracing;
+
+use tiktoken_rs::{bpe_for_model, o200k_base_singleton};
 
 // ---------------------------------------------------------------------------
 // BimoApi — the public interface
@@ -557,7 +560,8 @@ impl BimoApi {
             .iter()
             .map(|m| {
                 let chars = m.content.len();
-                let tokens = estimate_tokens(&m.content);
+                let tokens =
+                    estimate_tokens(&m.content, self.agent.config.selected_model.as_deref());
                 let role = match m.role {
                     Role::System => "system",
                     Role::User => "user",
@@ -575,7 +579,10 @@ impl BimoApi {
 
         let total_chars: usize = messages.iter().map(|m| m.characters).sum();
         let total_tokens: usize = messages.iter().map(|m| m.estimated_tokens).sum();
-        let max_tokens = estimate_max_context(&self.agent.config.selected_model);
+        let max_tokens = estimate_max_context(
+            &self.agent.config.selected_model,
+            &self.agent.available_models,
+        );
         let remaining = max_tokens.saturating_sub(total_tokens);
         let usage = if max_tokens > 0 {
             (total_tokens as f64 / max_tokens as f64) * 100.0
@@ -616,48 +623,39 @@ impl BimoApi {
 // Context estimation helpers
 // ---------------------------------------------------------------------------
 
-/// Rough token estimate: ~4 characters per token (common for English text).
-fn estimate_tokens(text: &str) -> usize {
-    text.len().div_ceil(4)
+/// Estimate the number of tokens in text using the model's tokenizer.
+///
+/// Uses `tiktoken-rs` to select the correct BPE tokenizer for the given model.
+/// Falls back to `o200k_base` (GPT-4o / o-series) when the model is unknown.
+fn estimate_tokens(text: &str, model: Option<&str>) -> usize {
+    let bpe = match model.and_then(|m| bpe_for_model(m).ok()) {
+        Some(bpe) => bpe,
+        None => o200k_base_singleton(),
+    };
+    bpe.encode_with_special_tokens(text).len()
 }
 
-/// Estimate the max context window for a model based on its id/name.
-fn estimate_max_context(model: &Option<String>) -> usize {
-    let model_str = model.as_deref().unwrap_or("");
-    let lower = model_str.to_lowercase();
+/// Estimate the max context window for a model.
+///
+/// Priority:
+/// 1. Stored `context_window` from the fetched model metadata (provider API).
+/// 2. Static lookup table of known model ids / family patterns.
+/// 3. Sensible default (128K).
+fn estimate_max_context(model: &Option<String>, available_models: &[ModelInfo]) -> usize {
+    let model_id = match model {
+        Some(id) => id,
+        None => return 128_000,
+    };
 
-    if lower.contains("claude") {
-        if lower.contains("opus") || lower.contains("sonnet-4") || lower.contains("3.5") {
-            return 200_000;
+    // 1. Stored metadata from provider API
+    if let Some(info) = available_models.iter().find(|m| m.id == *model_id) {
+        if let Some(ctx) = info.context_window {
+            return ctx as usize;
         }
-        if lower.contains("haiku") {
-            return 200_000;
-        }
-        return 100_000;
-    }
-    if lower.contains("o3") || lower.contains("o4") {
-        return 200_000;
-    }
-    if lower.contains("o1") {
-        return 200_000;
-    }
-    if lower.contains("gpt-4o") || lower.contains("gpt-4-turbo") {
-        return 128_000;
-    }
-    if lower.contains("gpt-4") {
-        return 8_192;
-    }
-    if lower.contains("gpt-3.5") {
-        return 16_385;
-    }
-    if lower.contains("gemini") {
-        return 1_000_000;
-    }
-    if lower.contains("llama") || lower.contains("qwen") || lower.contains("deepseek") {
-        return 128_000;
     }
 
-    128_000
+    // 2. Static lookup
+    lookup_known_context_window(model_id).unwrap_or(128_000) as usize
 }
 
 #[cfg(test)]
@@ -849,28 +847,133 @@ mod tests {
 
     #[test]
     fn estimate_tokens_basic() {
-        assert_eq!(estimate_tokens(""), 0);
-        assert_eq!(estimate_tokens("ab"), 1);
-        assert_eq!(estimate_tokens("abcdefgh"), 2);
-        assert_eq!(estimate_tokens("hello world"), 3);
+        let count = |s: &str| estimate_tokens(s, None);
+        assert_eq!(count(""), 0);
+        assert!(count("ab") > 0);
+        assert!(count("abcdefgh") > 0);
+        assert!(count("hello world") > 0);
+    }
+
+    #[test]
+    fn estimate_tokens_longer_text() {
+        let count = |s: &str| estimate_tokens(s, None);
+        // Longer texts should have more tokens than shorter ones
+        assert!(count("hello") < count("hello world this is a longer text"));
+        // Non-ASCII text should produce tokens
+        assert!(count("你好世界") > 0);
+        assert!(count("🚀") > 0);
+    }
+
+    #[test]
+    fn estimate_tokens_uses_model_tokenizer() {
+        // Different models may use different tokenizers;
+        // verify the function doesn't panic with any model name
+        let text = "hello world";
+        assert!(estimate_tokens(text, Some("gpt-4o")) > 0);
+        assert!(estimate_tokens(text, Some("gpt-4")) > 0);
+        assert!(estimate_tokens(text, Some("o1")) > 0);
+        assert!(estimate_tokens(text, Some("unknown-model")) > 0);
+        assert!(estimate_tokens(text, None) > 0);
     }
 
     #[test]
     fn estimate_max_context_models() {
-        assert_eq!(estimate_max_context(&Some("gpt-4".into())), 8_192);
-        assert_eq!(estimate_max_context(&Some("gpt-4o".into())), 128_000);
+        let empty = &[];
+
+        assert_eq!(estimate_max_context(&Some("gpt-4".into()), empty), 8_192);
+        assert_eq!(estimate_max_context(&Some("gpt-4o".into()), empty), 128_000);
         assert_eq!(
-            estimate_max_context(&Some("claude-sonnet-4-20250514".into())),
-            200_000
+            estimate_max_context(&Some("gpt-4-turbo".into()), empty),
+            128_000
         );
-        assert_eq!(estimate_max_context(&Some("o3-mini".into())), 200_000);
         assert_eq!(
-            estimate_max_context(&Some("gemini-2.5-pro".into())),
+            estimate_max_context(&Some("gpt-4.1-nano".into()), empty),
             1_000_000
         );
-        assert_eq!(estimate_max_context(&Some("llama3".into())), 128_000);
-        assert_eq!(estimate_max_context(&Some("mystery-model".into())), 128_000);
-        assert_eq!(estimate_max_context(&None), 128_000);
+        assert_eq!(
+            estimate_max_context(&Some("gpt-4.5-preview".into()), empty),
+            128_000
+        );
+        assert_eq!(
+            estimate_max_context(&Some("o3-mini".into()), empty),
+            200_000
+        );
+        assert_eq!(
+            estimate_max_context(&Some("o4-mini".into()), empty),
+            200_000
+        );
+        assert_eq!(estimate_max_context(&Some("o1".into()), empty), 200_000);
+        assert_eq!(
+            estimate_max_context(&Some("claude-sonnet-4-20250514".into()), empty),
+            200_000
+        );
+        assert_eq!(
+            estimate_max_context(&Some("claude-3-opus".into()), empty),
+            200_000
+        );
+        assert_eq!(
+            estimate_max_context(&Some("claude-2".into()), empty),
+            100_000
+        );
+        assert_eq!(
+            estimate_max_context(&Some("gemini-2.5-pro".into()), empty),
+            1_000_000
+        );
+        assert_eq!(
+            estimate_max_context(&Some("gemini-1.5-pro".into()), empty),
+            2_000_000
+        );
+        assert_eq!(
+            estimate_max_context(&Some("llama3.1".into()), empty),
+            128_000
+        );
+        assert_eq!(estimate_max_context(&Some("llama3".into()), empty), 8_192);
+        assert_eq!(
+            estimate_max_context(&Some("deepseek-chat".into()), empty),
+            128_000
+        );
+        assert_eq!(
+            estimate_max_context(&Some("mistral-large".into()), empty),
+            128_000
+        );
+        assert_eq!(
+            estimate_max_context(&Some("codestral".into()), empty),
+            256_000
+        );
+        assert_eq!(
+            estimate_max_context(&Some("qwen2.5".into()), empty),
+            128_000
+        );
+        assert_eq!(
+            estimate_max_context(&Some("command-r-plus".into()), empty),
+            128_000
+        );
+        assert_eq!(
+            estimate_max_context(&Some("mystery-model".into()), empty),
+            128_000
+        );
+        assert_eq!(estimate_max_context(&None, empty), 128_000);
+    }
+
+    #[test]
+    fn estimate_max_context_prefers_stored_metadata() {
+        let models = &[ModelInfo {
+            id: "my-custom-model".into(),
+            name: "My Custom Model".into(),
+            provider_id: "openai".into(),
+            tier: None,
+            context_window: Some(42_000),
+        }];
+        // Stored value takes priority over heuristic
+        assert_eq!(
+            estimate_max_context(&Some("my-custom-model".into()), models),
+            42_000
+        );
+        // Unknown model with no stored data falls back to heuristic default
+        assert_eq!(
+            estimate_max_context(&Some("mystery-model".into()), models),
+            128_000
+        );
     }
 
     #[test]

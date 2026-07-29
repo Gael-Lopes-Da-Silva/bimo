@@ -56,6 +56,9 @@ pub struct RawModel {
     /// Tier label (e.g. "free", "paid") inferred from pricing metadata.
     #[serde(default)]
     pub tier: Option<String>,
+    /// Context window size in tokens (parsed from provider API if available).
+    #[serde(default)]
+    pub context_window: Option<u32>,
 }
 
 #[derive(Debug, Clone)]
@@ -95,6 +98,7 @@ mod tests {
             id: "gpt-4".into(),
             name: Some("GPT-4".into()),
             tier: None,
+            context_window: None,
         };
         let json = serde_json::to_string(&model).unwrap();
         let deserialized: RawModel = serde_json::from_str(&json).unwrap();
