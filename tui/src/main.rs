@@ -1,6 +1,8 @@
 use bimo_api::BimoApi;
 use bimo_api::api::dto::{ApiResponse, ChatRequest, CommandRequest};
-use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{
+    Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEventKind,
+};
 use futures::StreamExt;
 use ratatui::{
     Frame, Terminal,
@@ -62,6 +64,7 @@ struct App {
     completion_visible: bool,
     completion_selected: usize,
     completion_offset: usize,
+    completion_popup_area: Option<Rect>,
 }
 
 impl App {
@@ -85,6 +88,7 @@ impl App {
             completion_visible: false,
             completion_selected: 0,
             completion_offset: 0,
+            completion_popup_area: None,
         }
     }
 
@@ -179,11 +183,47 @@ impl App {
     }
 
     fn handle_event(&mut self, event: Event) {
-        let Event::Key(key) = event else { return };
-        if key.kind != KeyEventKind::Press {
-            return;
+        match event {
+            Event::Mouse(m) => self.handle_mouse(m),
+            Event::Key(key) => {
+                if key.kind != KeyEventKind::Press {
+                    return;
+                }
+                self.handle_key(key);
+            }
+            _ => {}
         }
+    }
 
+    fn handle_mouse(&mut self, m: crossterm::event::MouseEvent) {
+        if self.completion_visible
+            && let Some(popup) = self.completion_popup_area
+        {
+            let row = m.row;
+            let col = m.column;
+            if row > popup.y
+                && row < popup.y + popup.height - 1
+                && col > popup.x
+                && col < popup.x + popup.width - 1
+            {
+                let filtered = self.filtered_completions();
+                let item_idx = self.completion_offset + (row - popup.y - 1) as usize;
+                if item_idx < filtered.len() {
+                    self.completion_selected = item_idx;
+                    if matches!(m.kind, MouseEventKind::Down(_)) {
+                        let (name, _) = &filtered[item_idx];
+                        self.completion_visible = false;
+                        self.completion_offset = 0;
+                        self.input.clear();
+                        self.cursor = 0;
+                        self.exec_cmd(format!("/{name}"));
+                    }
+                }
+            }
+        }
+    }
+
+    fn handle_key(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Char('q') if key.modifiers == KeyModifiers::CONTROL => {
                 self.should_quit = true;
@@ -596,6 +636,7 @@ impl App {
         let popup_y = input_area.y.saturating_sub(popup_height);
 
         let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
+        self.completion_popup_area = Some(popup_area);
 
         // content_width excludes borders (2 chars)
         let content_width = popup_width.saturating_sub(2) as usize;
@@ -696,7 +737,11 @@ async fn main() -> Result<()> {
 
     crossterm::terminal::enable_raw_mode()?;
     let mut stdout = std::io::stdout();
-    crossterm::execute!(stdout, crossterm::terminal::EnterAlternateScreen)?;
+    crossterm::execute!(
+        stdout,
+        crossterm::terminal::EnterAlternateScreen,
+        crossterm::event::EnableMouseCapture
+    )?;
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout))?;
 
     let worker_tx = spawn_worker();
@@ -747,11 +792,12 @@ async fn main() -> Result<()> {
 
     let result = app.run(&mut terminal).await;
 
-    crossterm::terminal::disable_raw_mode()?;
     crossterm::execute!(
         terminal.backend_mut(),
-        crossterm::terminal::LeaveAlternateScreen
+        crossterm::terminal::LeaveAlternateScreen,
+        crossterm::event::DisableMouseCapture
     )?;
+    crossterm::terminal::disable_raw_mode()?;
 
     if let Err(e) = result {
         eprintln!("Error: {e}");
