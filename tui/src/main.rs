@@ -463,11 +463,19 @@ impl App {
         if filter.is_empty() {
             return self.commands.clone();
         }
-        self.commands
+        let mut results: Vec<_> = self
+            .commands
             .iter()
             .filter(|(name, _)| name.starts_with(filter))
             .cloned()
-            .collect()
+            .collect();
+        if "quit".starts_with(filter) || "exit".starts_with(filter) {
+            let exit = ("exit".into(), "Exit the application".into());
+            if !results.contains(&exit) {
+                results.push(exit);
+            }
+        }
+        results
     }
 
     fn update_completion(&mut self) {
@@ -504,6 +512,10 @@ impl App {
     }
 
     fn exec_cmd(&mut self, cmd: String) {
+        if matches!(cmd.trim(), "/exit" | "/quit") {
+            self.should_quit = true;
+            return;
+        }
         self.add_msg("command", &cmd);
         let (tx, rx) = oneshot::channel();
         if self
@@ -826,6 +838,8 @@ async fn main() -> Result<()> {
                 })
                 .collect();
         }
+        app.commands
+            .push(("exit".into(), "Exit the application".into()));
     }
 
     app.boot_message();
