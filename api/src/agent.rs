@@ -454,6 +454,15 @@ impl Agent {
             _ => {}
         }
 
+        // Handle pending user message (e.g. from /prompt command)
+        if let Some(msg) = ctx.pending_user_message.take() {
+            tracing::info!(
+                message_len = msg.len(),
+                "adding pending user message from command"
+            );
+            self.session.add_user_message(&msg);
+        }
+
         self.sync_from_command_context(&ctx);
         Ok(result)
     }
@@ -649,6 +658,7 @@ impl Agent {
             active_session_id: self.session.id.clone(),
             all_sessions: vec![],
             switch_session_id: None,
+            pending_user_message: None,
         }
     }
 
@@ -810,6 +820,11 @@ mod tests {
 
     #[test]
     fn add_custom_provider_succeeds() {
+        // Clean any leftover state from previous test runs
+        let mut cfg = crate::config::AppConfig::load();
+        cfg.custom_providers.clear();
+        let _ = cfg.save();
+
         let mut agent = Agent::new();
         let cp = CustomProviderConfig {
             id: "my-test-provider".into(),
@@ -822,12 +837,17 @@ mod tests {
             auth_header: Some("Authorization".into()),
             auth_prefix: Some("Bearer ".into()),
         };
-        let result = agent.add_custom_provider(cp);
-        assert!(result.is_ok());
+        if let Err(e) = agent.add_custom_provider(cp) {
+            panic!("add_custom_provider failed: {}", e);
+        }
         let providers = agent.list_providers();
         assert!(providers.iter().any(|p| p.id == "my-test-provider"));
-        // Cleanup config change
-        agent.config.custom_providers.clear();
+        // Cleanup: remove the custom provider and save clean config
+        agent
+            .config
+            .custom_providers
+            .retain(|p| p.id != "my-test-provider");
+        let _ = agent.config.save();
     }
 
     #[test]

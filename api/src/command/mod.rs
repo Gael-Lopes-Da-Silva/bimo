@@ -2,6 +2,7 @@ pub mod clear;
 pub mod compact;
 pub mod help;
 pub mod model;
+pub mod prompt;
 pub mod provider;
 pub mod session;
 pub mod status;
@@ -113,6 +114,9 @@ pub struct CommandContext {
     pub active_session_id: String,
     pub all_sessions: Vec<SessionInfo>,
     pub switch_session_id: Option<String>,
+    /// When set by a command, this message will be added as a user message
+    /// to the session after the command completes.
+    pub pending_user_message: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -146,6 +150,7 @@ impl CommandRegistry {
         reg.register(Box::new(tree::TreeCommand));
         reg.register(Box::new(thinking::ThinkingCommand));
         reg.register(Box::new(todo::TodoCommand));
+        reg.register(Box::new(prompt::PromptCommand));
         reg.register_async(Box::new(compact::CompactCommand));
         reg
     }
@@ -343,6 +348,7 @@ mod tests {
             active_session_id: "test-session-id".into(),
             all_sessions: vec![],
             switch_session_id: None,
+            pending_user_message: None,
         }
     }
 
@@ -360,6 +366,7 @@ mod tests {
         assert!(names.contains(&"tree"));
         assert!(names.contains(&"compact"));
         assert!(names.contains(&"todo"));
+        assert!(names.contains(&"prompt"));
     }
 
     #[test]
