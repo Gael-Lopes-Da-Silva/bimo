@@ -742,14 +742,9 @@ pub(crate) fn build_project_context(cwd: &str) -> ProjectContext {
 
 /// Read contents of standard agent instruction files from the project root.
 /// Returns (list of filenames found, list of rendered content chunks).
-/// Supports: AGENTS.md, CLAUDE.md, GEMINI.md, .github/copilot-instructions.md
+/// Supports: AGENTS.md, CLAUDE.md, GEMINI.md, .agents/AGENTS.md
 fn load_agent_instructions(cwd: &str) -> (Vec<String>, Vec<String>) {
-    const CANDIDATES: &[&str] = &[
-        "AGENTS.md",
-        "CLAUDE.md",
-        "GEMINI.md",
-        ".github/copilot-instructions.md",
-    ];
+    const CANDIDATES: &[&str] = &["AGENTS.md", "CLAUDE.md", "GEMINI.md", ".agents/AGENTS.md"];
 
     let mut filenames: Vec<String> = Vec::new();
     let mut chunks: Vec<String> = Vec::new();
