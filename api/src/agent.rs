@@ -31,6 +31,7 @@ pub struct Agent {
     pub runtime: Option<ProviderRuntime>,
     pub command_registry: CommandRegistry,
     pub tool_registry: ToolRegistry,
+    pub loaded_skills: Vec<String>,
 }
 
 impl Default for Agent {
@@ -83,6 +84,7 @@ impl Agent {
             runtime: None,
             command_registry,
             tool_registry,
+            loaded_skills: Vec::new(),
         };
 
         if let Some(pid) = agent.config.selected_provider.clone() {
@@ -463,6 +465,15 @@ impl Agent {
             self.session.add_user_message(&msg);
         }
 
+        // Handle pending system message (e.g. from /skill command)
+        if let Some(msg) = ctx.pending_system_message.take() {
+            tracing::info!(
+                message_len = msg.len(),
+                "adding pending system message from command"
+            );
+            self.session.add_system_message(&msg);
+        }
+
         self.sync_from_command_context(&ctx);
         Ok(result)
     }
@@ -659,6 +670,8 @@ impl Agent {
             all_sessions: vec![],
             switch_session_id: None,
             pending_user_message: None,
+            pending_system_message: None,
+            loaded_skills: self.loaded_skills.clone(),
         }
     }
 
@@ -667,6 +680,7 @@ impl Agent {
         self.config.selected_model = ctx.selected_model.clone();
         self.config.thinking = ctx.thinking.clone();
         self.session.todos = ctx.todos.clone();
+        self.loaded_skills = ctx.loaded_skills.clone();
     }
 }
 

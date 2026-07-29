@@ -5,6 +5,7 @@ pub mod model;
 pub mod prompt;
 pub mod provider;
 pub mod session;
+pub mod skill;
 pub mod status;
 pub mod thinking;
 pub mod todo;
@@ -117,6 +118,11 @@ pub struct CommandContext {
     /// When set by a command, this message will be added as a user message
     /// to the session after the command completes.
     pub pending_user_message: Option<String>,
+    /// When set by a command, this message will be added as a system message
+    /// to the session after the command completes.
+    pub pending_system_message: Option<String>,
+    /// Names of skills currently loaded into the session.
+    pub loaded_skills: Vec<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -151,6 +157,7 @@ impl CommandRegistry {
         reg.register(Box::new(thinking::ThinkingCommand));
         reg.register(Box::new(todo::TodoCommand));
         reg.register(Box::new(prompt::PromptCommand));
+        reg.register(Box::new(skill::SkillCommand));
         reg.register_async(Box::new(compact::CompactCommand));
         reg
     }
@@ -349,6 +356,8 @@ mod tests {
             all_sessions: vec![],
             switch_session_id: None,
             pending_user_message: None,
+            pending_system_message: None,
+            loaded_skills: vec![],
         }
     }
 

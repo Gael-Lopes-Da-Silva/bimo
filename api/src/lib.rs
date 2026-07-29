@@ -7,6 +7,7 @@ pub mod model;
 pub mod prompts;
 pub mod provider;
 pub mod session;
+pub mod skill;
 pub mod todo;
 pub mod tool;
 
