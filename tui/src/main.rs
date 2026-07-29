@@ -1,6 +1,6 @@
 use bimo_api::BimoApi;
 use bimo_api::api::dto::{ApiResponse, ChatRequest, CommandRequest};
-use crossterm::event::{Event, EventStream, KeyCode, KeyEventKind, KeyModifiers};
+use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use futures::StreamExt;
 use ratatui::{
     Frame, Terminal,
@@ -8,7 +8,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style, Stylize},
     text::{Line, Span, Text},
-    widgets::{Block, Borders, Paragraph, Wrap},
+    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap},
 };
 use tokio::sync::oneshot;
 
@@ -34,6 +34,9 @@ enum WorkerMsg {
         command: String,
         tx: oneshot::Sender<WorkerResult>,
     },
+    ListCommands {
+        tx: oneshot::Sender<WorkerResult>,
+    },
 }
 
 enum WorkerResult {
@@ -55,6 +58,9 @@ struct App {
     session_id: String,
     message_count: usize,
     needs_config: bool,
+    commands: Vec<(String, String)>,
+    completion_visible: bool,
+    completion_selected: usize,
 }
 
 impl App {
@@ -74,6 +80,9 @@ impl App {
             session_id: String::new(),
             message_count: 0,
             needs_config: true,
+            commands: Vec::new(),
+            completion_visible: false,
+            completion_selected: 0,
         }
     }
 
@@ -176,14 +185,101 @@ impl App {
         match key.code {
             KeyCode::Char('q') if key.modifiers == KeyModifiers::CONTROL => {
                 self.should_quit = true;
+                return;
             }
             KeyCode::Char('c') if key.modifiers == KeyModifiers::CONTROL => {
                 self.should_quit = true;
+                return;
             }
             KeyCode::Char('l') if key.modifiers == KeyModifiers::CONTROL => {
                 self.messages.retain(|m| m.role == "system");
                 self.auto_scroll = true;
+                return;
             }
+            _ => {}
+        }
+
+        if self.completion_visible {
+            self.handle_completion_key(key);
+        } else {
+            self.handle_normal_key(key);
+        }
+    }
+
+    fn handle_completion_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Up => {
+                let count = self.filtered_completions().len();
+                self.completion_selected = if self.completion_selected == 0 {
+                    count.saturating_sub(1)
+                } else {
+                    self.completion_selected - 1
+                };
+            }
+            KeyCode::Down => {
+                let count = self.filtered_completions().len();
+                self.completion_selected = (self.completion_selected + 1) % count;
+            }
+            KeyCode::Tab | KeyCode::Enter => {
+                let filtered = self.filtered_completions();
+                if let Some((name, _)) = filtered.get(self.completion_selected) {
+                    self.input.clear();
+                    self.cursor = 0;
+                    if matches!(key.code, KeyCode::Enter) {
+                        self.completion_visible = false;
+                        self.exec_cmd(format!("/{name}"));
+                    } else {
+                        self.input = format!("/{name} ");
+                        self.cursor = self.input.len();
+                        self.completion_visible = false;
+                    }
+                }
+            }
+            KeyCode::Esc => {
+                self.completion_visible = false;
+            }
+            KeyCode::Backspace => {
+                if self.cursor > 0 {
+                    self.cursor -= 1;
+                    self.input.remove(self.cursor);
+                }
+                self.update_completion();
+            }
+            KeyCode::Delete => {
+                if self.cursor < self.input.len() {
+                    self.input.remove(self.cursor);
+                }
+                self.update_completion();
+            }
+            KeyCode::Left => {
+                self.completion_visible = false;
+                self.cursor = self.cursor.saturating_sub(1);
+            }
+            KeyCode::Right => {
+                self.completion_visible = false;
+                if self.cursor < self.input.len() {
+                    self.cursor += 1;
+                }
+            }
+            KeyCode::Home => {
+                self.completion_visible = false;
+                self.cursor = 0;
+            }
+            KeyCode::End => {
+                self.completion_visible = false;
+                self.cursor = self.input.len();
+            }
+            KeyCode::Char(c) => {
+                self.input.insert(self.cursor, c);
+                self.cursor += 1;
+                self.update_completion();
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_normal_key(&mut self, key: KeyEvent) {
+        match key.code {
             KeyCode::Enter => {
                 let input = self.input.trim().to_string();
                 if !input.is_empty() && self.pending_rx.is_none() {
@@ -199,17 +295,20 @@ impl App {
             KeyCode::Char(c) => {
                 self.input.insert(self.cursor, c);
                 self.cursor += 1;
+                self.update_completion();
             }
             KeyCode::Backspace => {
                 if self.cursor > 0 {
                     self.cursor -= 1;
                     self.input.remove(self.cursor);
                 }
+                self.update_completion();
             }
             KeyCode::Delete => {
                 if self.cursor < self.input.len() {
                     self.input.remove(self.cursor);
                 }
+                self.update_completion();
             }
             KeyCode::Left => self.cursor = self.cursor.saturating_sub(1),
             KeyCode::Right => {
@@ -247,6 +346,33 @@ impl App {
             }
             _ => {}
         }
+    }
+
+    fn filtered_completions(&self) -> Vec<(String, String)> {
+        let filter = self.input.strip_prefix('/').unwrap_or("");
+        if filter.is_empty() {
+            return self.commands.clone();
+        }
+        self.commands
+            .iter()
+            .filter(|(name, _)| name.starts_with(filter))
+            .cloned()
+            .collect()
+    }
+
+    fn update_completion(&mut self) {
+        if self.input.starts_with('/') {
+            let filtered = self.filtered_completions();
+            if !filtered.is_empty() {
+                self.completion_visible = true;
+                if self.completion_selected >= filtered.len() {
+                    self.completion_selected = 0;
+                }
+                return;
+            }
+        }
+        self.completion_visible = false;
+        self.completion_selected = 0;
     }
 
     fn send_chat(&mut self, msg: String) {
@@ -334,6 +460,7 @@ impl App {
 
         self.render_chat(f, chunks[0]);
         self.render_input(f, chunks[1]);
+        self.render_completion_popup(f, chunks[0], chunks[1]);
     }
 
     fn render_chat(&self, f: &mut Frame, area: Rect) {
@@ -423,6 +550,66 @@ impl App {
             f.set_cursor_position((area.x + 1 + self.cursor as u16, area.y + 1));
         }
     }
+
+    fn render_completion_popup(&self, f: &mut Frame, chat_area: Rect, input_area: Rect) {
+        if !self.completion_visible {
+            return;
+        }
+
+        let filtered = self.filtered_completions();
+        if filtered.is_empty() {
+            return;
+        }
+
+        let max_items = 10.min(filtered.len());
+        let popup_height = max_items as u16 + 2;
+        let popup_width = 60u16.min(chat_area.width.saturating_sub(4));
+
+        let popup_x = input_area.x + 1;
+        let popup_y = input_area.y.saturating_sub(popup_height);
+
+        let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
+
+        let items: Vec<ListItem> = filtered
+            .iter()
+            .take(max_items)
+            .enumerate()
+            .map(|(i, (name, desc))| {
+                let selected = i == self.completion_selected;
+                let style = if selected {
+                    Style::default()
+                        .bg(Color::Blue)
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(Color::White)
+                };
+
+                let text = if popup_width as usize > name.len() + desc.len() + 5 {
+                    format!(" /{}  {}", name, desc)
+                } else {
+                    format!(" /{}", name)
+                };
+
+                ListItem::new(Line::from(Span::styled(text, style)))
+            })
+            .collect();
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" Commands ")
+            .border_style(Style::default().fg(Color::Cyan));
+
+        let list = List::new(items).block(block).highlight_style(
+            Style::default()
+                .bg(Color::Blue)
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        );
+
+        f.render_widget(Clear, popup_area);
+        f.render_widget(list, popup_area);
+    }
 }
 
 fn spawn_worker() -> tokio::sync::mpsc::UnboundedSender<WorkerMsg> {
@@ -443,6 +630,10 @@ fn spawn_worker() -> tokio::sync::mpsc::UnboundedSender<WorkerMsg> {
                 }
                 WorkerMsg::Command { command, tx } => {
                     let resp = api.execute_command(CommandRequest { command }).await;
+                    let _ = tx.send(WorkerResult::Response(resp));
+                }
+                WorkerMsg::ListCommands { tx } => {
+                    let resp = api.help();
                     let _ = tx.send(WorkerResult::Response(resp));
                 }
             }
@@ -467,7 +658,7 @@ async fn main() -> Result<()> {
     let worker_tx = spawn_worker();
     let mut app = App::new(worker_tx);
 
-    // Get initial state via a status command
+    // Get initial state and commands
     {
         let (tx, rx) = oneshot::channel();
         if app
@@ -481,6 +672,26 @@ async fn main() -> Result<()> {
             if let Ok(WorkerResult::Response(resp)) = rx.await {
                 if let Some(data) = resp.data {
                     app.set_initial_state(&data);
+                }
+            }
+        }
+    }
+    {
+        let (tx, rx) = oneshot::channel();
+        if app.worker_tx.send(WorkerMsg::ListCommands { tx }).is_ok() {
+            if let Ok(WorkerResult::Response(resp)) = rx.await {
+                if let Some(data) = resp.data {
+                    if let Some(cmds) = data["commands"].as_array() {
+                        app.commands = cmds
+                            .iter()
+                            .filter_map(|c| {
+                                Some((
+                                    c["name"].as_str()?.to_string(),
+                                    c["description"].as_str()?.to_string(),
+                                ))
+                            })
+                            .collect();
+                    }
                 }
             }
         }
