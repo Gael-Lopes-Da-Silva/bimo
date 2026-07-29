@@ -83,13 +83,10 @@ impl SlashCommand for ProviderCommand {
                     )));
                 }
                 ctx.selected_provider = Some(provider_id.to_string());
-                let requires_key = ctx
-                    .providers
-                    .iter()
-                    .find(|p| p.id == *provider_id)
-                    .map(|p| p.requires_api_key)
-                    .unwrap_or(false);
-                let output = if requires_key {
+                let info = ctx.providers.iter().find(|p| p.id == *provider_id);
+                let requires_key = info.map(|p| p.requires_api_key).unwrap_or(false);
+                let is_configured = ctx.configured_providers.contains(&provider_id.to_string());
+                let output = if requires_key && !is_configured {
                     format!(
                         "Selected provider: {provider_id}. \
                          This provider requires an API key — run /provider configure {provider_id} \

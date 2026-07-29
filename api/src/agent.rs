@@ -518,48 +518,40 @@ impl Agent {
 
         self.sync_from_command_context(&ctx);
 
-        // If a provider is selected but no runtime exists, try to resolve
-        if let Some(ref pid) = self.config.selected_provider.clone()
-            && self.runtime.is_none()
-        {
-            match self.provider_registry.resolve_runtime(pid, &self.config) {
-                Ok(rt) => {
-                    tracing::info!(provider_id = %pid, "runtime resolved after command");
-                    self.runtime = Some(rt);
-
-                    // Auto-configure local providers that don't need an API key
-                    if !self.config.provider_configs.contains_key(pid) {
-                        let needs_key = self
-                            .provider_registry
-                            .list_all(&self.config)
-                            .into_iter()
-                            .find(|p| p.id == *pid)
-                            .map(|p| p.requires_api_key)
-                            .unwrap_or(true);
-                        if !needs_key {
-                            tracing::info!(provider_id = %pid, "auto-configuring local provider");
-                            let _ = self.configure_provider(pid, None, None);
-                        }
-                    }
-
-                    match self.fetch_models().await {
-                        Ok(models) => {
-                            if models.is_empty() {
-                                let warn = "\nWarning: provider returned no models.";
-                                if !result.output.contains(warn.trim()) {
-                                    result.output.push_str(warn);
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            tracing::warn!(error = %e, "failed to fetch models after provider select");
-                        }
+        // If a provider is selected and runtime is missing or stale, re-init
+        if let Some(ref pid) = self.config.selected_provider.clone() {
+            let current_id = self.runtime.as_ref().map(|r| &r.id);
+            if current_id != Some(pid) {
+                // Auto-configure local providers that don't need an API key
+                if !self.config.provider_configs.contains_key(pid) {
+                    let needs_key = self
+                        .provider_registry
+                        .list_all(&self.config)
+                        .into_iter()
+                        .find(|p| p.id == *pid)
+                        .map(|p| p.requires_api_key)
+                        .unwrap_or(true);
+                    if !needs_key {
+                        tracing::info!(provider_id = %pid, "auto-configuring local provider");
+                        let _ = self.configure_provider(pid, None, None);
                     }
                 }
-                Err(e) => {
-                    let warn = format!("\nWarning: {e}");
-                    if !result.output.contains(&warn) {
-                        result.output.push_str(&warn);
+
+                match self.select_provider(pid).await {
+                    Ok(_info) => {
+                        tracing::info!(provider_id = %pid, "provider re-initialised after command");
+                        if self.available_models.is_empty() {
+                            let warn = "\nWarning: provider returned no models.";
+                            if !result.output.contains(warn.trim()) {
+                                result.output.push_str(warn);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        let warn = format!("\nWarning: {e}");
+                        if !result.output.contains(&warn) {
+                            result.output.push_str(&warn);
+                        }
                     }
                 }
             }

@@ -73,7 +73,17 @@ impl SlashCommand for ModelCommand {
                         } else {
                             ""
                         };
-                        format!("  {:<16} {:<16} {sel}", m.id, m.name)
+                        let label = if m.name == m.id {
+                            m.id.clone()
+                        } else {
+                            format!("{} — {}", m.id, m.name)
+                        };
+                        let tier_tag = m
+                            .tier
+                            .as_ref()
+                            .map(|t| format!(" [{t}]"))
+                            .unwrap_or_default();
+                        format!("  {label}{tier_tag}{sel}")
                     })
                     .collect();
                 let output = format!("Available models:\n{}", lines.join("\n"));

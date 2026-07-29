@@ -2,6 +2,7 @@ use crate::config::ThinkingConfig;
 use crate::error::{BimoError, Result};
 use futures_util::StreamExt;
 use reqwest::Client;
+use std::collections::HashSet;
 use std::sync::LazyLock;
 use tracing;
 
@@ -71,7 +72,8 @@ fn parse_models_response(
                 .filter_map(|v| {
                     let id = v.get("id")?.as_str()?.to_string();
                     let name = v.get("name").and_then(|n| n.as_str()).map(String::from);
-                    let tier = infer_tier_from_pricing(&v);
+                    let tier = infer_tier_from_pricing(&v)
+                        .or_else(|| infer_tier_from_name(&id, name.as_deref()));
                     let context_window = extract_context_window(&v);
                     Some(RawModel {
                         id,
@@ -104,6 +106,31 @@ fn parse_models_response(
                 .collect();
             Ok(models)
         }
+    }
+}
+
+/// Known free model IDs (case-insensitive). Any model whose lowered id or name
+/// appears in this set is marked as free regardless of naming convention.
+static KNOWN_FREE_MODELS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
+    HashSet::from([
+        "deepseek-v4-flash-free",
+        "mimo-v2.5-free",
+        "laguna-s-2.1-free",
+        "ling-3.0-flash-free",
+        "north-mini-code-free",
+        "nemotron-3-ultra-free",
+        "big-pickle",
+    ])
+});
+
+/// Fallback tier inference based on model name containing "free" (case-insensitive)
+/// or a known-free model ID whitelist.
+fn infer_tier_from_name(id: &str, name: Option<&str>) -> Option<String> {
+    let haystack = name.unwrap_or(id).to_lowercase();
+    if haystack.contains("free") || KNOWN_FREE_MODELS.contains(&haystack.as_str()) {
+        Some("free".into())
+    } else {
+        None
     }
 }
 
