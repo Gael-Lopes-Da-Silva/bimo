@@ -61,6 +61,7 @@ struct App {
     message_count: usize,
     needs_config: bool,
     commands: Vec<(String, String)>,
+    subcommands: std::collections::HashMap<String, Vec<(String, String)>>,
     completion_visible: bool,
     completion_selected: usize,
     completion_offset: usize,
@@ -85,6 +86,7 @@ impl App {
             message_count: 0,
             needs_config: true,
             commands: Vec::new(),
+            subcommands: std::collections::HashMap::new(),
             completion_visible: false,
             completion_selected: 0,
             completion_offset: 0,
@@ -230,11 +232,16 @@ impl App {
                     if item_idx < filtered.len() {
                         self.completion_selected = item_idx;
                         let (name, _) = &filtered[item_idx];
+                        let prefix = self.current_command_prefix();
+                        let full_name = match prefix {
+                            Some(p) => format!("{} {}", p, name),
+                            None => name.clone(),
+                        };
                         self.completion_visible = false;
                         self.completion_offset = 0;
                         self.input.clear();
                         self.cursor = 0;
-                        self.exec_cmd(format!("/{name}"));
+                        self.exec_cmd(format!("/{full_name}"));
                     }
                 }
             }
@@ -327,16 +334,27 @@ impl App {
             KeyCode::Tab | KeyCode::Enter => {
                 let filtered = self.filtered_completions();
                 if let Some((name, _)) = filtered.get(self.completion_selected) {
-                    self.input.clear();
-                    self.cursor = 0;
                     self.completion_offset = 0;
-                    if matches!(key.code, KeyCode::Enter) {
-                        self.completion_visible = false;
-                        self.exec_cmd(format!("/{name}"));
-                    } else {
-                        self.input = format!("/{name} ");
+                    let prefix = self.current_command_prefix();
+                    let full_name = match prefix {
+                        Some(p) => format!("{} {}", p, name),
+                        None => name.clone(),
+                    };
+                    if matches!(key.code, KeyCode::Tab) && self.subcommands.contains_key(&full_name)
+                    {
+                        self.completion_selected = 0;
+                        self.input = format!("/{full_name} ");
                         self.cursor = self.input.len();
+                        self.update_completion();
+                    } else if matches!(key.code, KeyCode::Enter) {
                         self.completion_visible = false;
+                        self.input.clear();
+                        self.cursor = 0;
+                        self.exec_cmd(format!("/{full_name}"));
+                    } else {
+                        self.completion_visible = false;
+                        self.input = format!("/{full_name} ");
+                        self.cursor = self.input.len();
                     }
                 }
             }
@@ -463,6 +481,21 @@ impl App {
         if filter.is_empty() {
             return self.commands.clone();
         }
+        // subcommand mode: filter contains a space
+        if let Some((cmd_name, sub_filter)) = filter.split_once(' ') {
+            if let Some(subs) = self.subcommands.get(cmd_name) {
+                if sub_filter.is_empty() {
+                    return subs.clone();
+                }
+                return subs
+                    .iter()
+                    .filter(|(sn, _)| sn.starts_with(sub_filter))
+                    .cloned()
+                    .collect();
+            }
+            return Vec::new();
+        }
+        // command mode: no space
         let mut results: Vec<_> = self
             .commands
             .iter()
@@ -476,6 +509,11 @@ impl App {
             }
         }
         results
+    }
+
+    fn current_command_prefix(&self) -> Option<&str> {
+        let filter = self.input.strip_prefix('/')?;
+        filter.split_once(' ').map(|(cmd, _)| cmd)
     }
 
     fn update_completion(&mut self) {
@@ -645,7 +683,7 @@ impl App {
         };
 
         let p = Paragraph::new(Text::from(lines))
-            .block(Block::default().borders(Borders::ALL).title(" Chat "))
+            .block(Block::default().borders(Borders::ALL))
             .scroll((offset as u16, 0))
             .wrap(Wrap { trim: false });
 
@@ -667,7 +705,7 @@ impl App {
 
         let p = Paragraph::new(content.as_str())
             .style(style)
-            .block(Block::default().borders(Borders::ALL).title(" Input "));
+            .block(Block::default().borders(Borders::ALL));
 
         f.render_widget(p, area);
 
@@ -709,7 +747,11 @@ impl App {
             .map(|(i, (name, desc))| {
                 let abs_idx = self.completion_offset + i;
                 let selected = abs_idx == self.completion_selected;
-                let cmd = format!("/{}", name);
+                let cmd = if self.input.contains(' ') {
+                    name.clone()
+                } else {
+                    format!("/{}", name)
+                };
                 let padded_cmd = format!(" {cmd:<name_col_width$}");
 
                 let desc_avail = content_width.saturating_sub(name_col_width + 3);
@@ -745,7 +787,6 @@ impl App {
 
         let block = Block::default()
             .borders(Borders::ALL)
-            .title(" Commands ")
             .border_style(Style::default().fg(Color::Cyan));
 
         let list = List::new(items).block(block);
@@ -776,7 +817,7 @@ fn spawn_worker() -> tokio::sync::mpsc::UnboundedSender<WorkerMsg> {
                     let _ = tx.send(WorkerResult::Response(resp));
                 }
                 WorkerMsg::ListCommands { tx } => {
-                    let resp = api.help();
+                    let resp = api.list_commands();
                     let _ = tx.send(WorkerResult::Response(resp));
                 }
             }
@@ -828,15 +869,30 @@ async fn main() -> Result<()> {
             && let Some(data) = resp.data
             && let Some(cmds) = data["commands"].as_array()
         {
-            app.commands = cmds
-                .iter()
-                .filter_map(|c| {
-                    Some((
-                        c["name"].as_str()?.to_string(),
-                        c["description"].as_str()?.to_string(),
-                    ))
-                })
-                .collect();
+            let mut cmds_list = Vec::new();
+            let mut subs_map = std::collections::HashMap::new();
+            for c in cmds {
+                if let (Some(name), Some(desc)) = (c["name"].as_str(), c["description"].as_str()) {
+                    let cmd_name = name.to_string();
+                    cmds_list.push((cmd_name.clone(), desc.to_string()));
+                    if let Some(subs) = c["subcommands"].as_array() {
+                        let entries: Vec<_> = subs
+                            .iter()
+                            .filter_map(|s| {
+                                Some((
+                                    s["name"].as_str()?.to_string(),
+                                    s["description"].as_str()?.to_string(),
+                                ))
+                            })
+                            .collect();
+                        if !entries.is_empty() {
+                            subs_map.insert(cmd_name, entries);
+                        }
+                    }
+                }
+            }
+            app.commands = cmds_list;
+            app.subcommands = subs_map;
         }
         app.commands
             .push(("exit".into(), "Exit the application".into()));
