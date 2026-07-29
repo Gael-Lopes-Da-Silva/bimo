@@ -196,21 +196,39 @@ impl App {
     }
 
     fn handle_mouse(&mut self, m: crossterm::event::MouseEvent) {
-        if self.completion_visible
-            && let Some(popup) = self.completion_popup_area
-        {
-            let row = m.row;
-            let col = m.column;
-            if row > popup.y
-                && row < popup.y + popup.height - 1
-                && col > popup.x
-                && col < popup.x + popup.width - 1
+        let hit = |app: &App| -> Option<Rect> {
+            let popup = app.completion_popup_area?;
+            if m.row > popup.y
+                && m.row < popup.y + popup.height - 1
+                && m.column > popup.x
+                && m.column < popup.x + popup.width - 1
             {
-                let filtered = self.filtered_completions();
-                let item_idx = self.completion_offset + (row - popup.y - 1) as usize;
-                if item_idx < filtered.len() {
-                    self.completion_selected = item_idx;
-                    if matches!(m.kind, MouseEventKind::Down(_)) {
+                Some(popup)
+            } else {
+                None
+            }
+        };
+
+        match m.kind {
+            MouseEventKind::Moved => {
+                if self.completion_visible
+                    && let Some(popup) = hit(self)
+                {
+                    let filtered = self.filtered_completions();
+                    let item_idx = self.completion_offset + (m.row - popup.y - 1) as usize;
+                    if item_idx < filtered.len() {
+                        self.completion_selected = item_idx;
+                    }
+                }
+            }
+            MouseEventKind::Down(_) => {
+                if self.completion_visible
+                    && let Some(popup) = hit(self)
+                {
+                    let filtered = self.filtered_completions();
+                    let item_idx = self.completion_offset + (m.row - popup.y - 1) as usize;
+                    if item_idx < filtered.len() {
+                        self.completion_selected = item_idx;
                         let (name, _) = &filtered[item_idx];
                         self.completion_visible = false;
                         self.completion_offset = 0;
@@ -220,6 +238,34 @@ impl App {
                     }
                 }
             }
+            MouseEventKind::ScrollUp => {
+                if self.completion_visible && hit(self).is_some() {
+                    let count = self.filtered_completions().len();
+                    if count > 0 {
+                        self.completion_selected = self.completion_selected.saturating_sub(1);
+                        self.sync_completion_scroll(count);
+                    }
+                } else {
+                    self.auto_scroll = false;
+                    self.scroll = self.scroll.saturating_add(3);
+                }
+            }
+            MouseEventKind::ScrollDown => {
+                if self.completion_visible && hit(self).is_some() {
+                    let count = self.filtered_completions().len();
+                    if count > 0 {
+                        self.completion_selected =
+                            (self.completion_selected + 1).min(count.saturating_sub(1));
+                        self.sync_completion_scroll(count);
+                    }
+                } else {
+                    self.scroll = self.scroll.saturating_sub(3);
+                    if self.scroll == 0 || self.scroll > 10000 {
+                        self.auto_scroll = true;
+                    }
+                }
+            }
+            _ => {}
         }
     }
 
