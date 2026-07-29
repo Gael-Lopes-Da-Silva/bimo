@@ -9,6 +9,18 @@ use super::registry::ToolRegistry;
 
 const MAX_OUTPUT_BYTES: usize = 50_000;
 
+/// Matches `<tool>...</tool>` blocks (dot-all for multi-line content).
+static TOOL_BLOCK_RE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"(?s)<tool>(.*?)</tool>").unwrap());
+
+/// Extracts `<name>content</name>` from inside a tool block.
+static NAME_TAG_RE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"<name>(.*?)</name>").unwrap());
+
+/// Matches any `<tag>content</tag>` — used to extract params inside tool blocks.
+static CHILD_TAG_RE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"<(\w+)>(.*?)</\w+>").unwrap());
+
 static TAG_PATTERN: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"<(\w+)\s+([^>]*?)/?>").unwrap());
 static ATTR_PATTERN: LazyLock<regex::Regex> =
@@ -32,12 +44,57 @@ pub struct ToolResult {
 
 /// Parse all tool calls from an LLM response string.
 ///
-/// Looks for patterns like:
-///   <tool_name param1="value1" param2="value2" />
-///   <tool_name param1="value1" />
+/// Supports two formats:
 ///
-/// Also handles content between the tags for tools that use it (e.g. write_file).
+/// 1. Block format (preferred — matches tool definitions in the prompt):
+///    ```xml
+///    <tool>
+///      <name>tool_name</name>
+///      <param1>value1</param1>
+///      <param2>value2</param2>
+///    </tool>
+///    ```
+///
+/// 2. Inline format (legacy — self-closing tag with attributes):
+///    ```xml
+///    <tool_name param1="value1" param2="value2" />
+///    <tool_name param1="value1">content</tool_name>
+///    ```
 pub fn parse_tool_calls(input: &str) -> Vec<ToolCall> {
+    // Try block format first
+    let blocks: Vec<_> = TOOL_BLOCK_RE.captures_iter(input).collect();
+    if !blocks.is_empty() {
+        return blocks
+            .iter()
+            .filter_map(|cap| parse_tool_block(&cap[1]))
+            .collect();
+    }
+
+    // Fall back to inline format
+    parse_tool_calls_inline(input)
+}
+
+/// Parse a single `<tool>...</tool>` block into a `ToolCall`.
+fn parse_tool_block(inner: &str) -> Option<ToolCall> {
+    let name = NAME_TAG_RE.captures(inner)?.get(1)?.as_str().to_string();
+
+    let mut arguments = HashMap::new();
+    for child in CHILD_TAG_RE.captures_iter(inner) {
+        let tag_name = &child[1];
+        if matches!(tag_name, "name" | "description" | "parameters") {
+            continue;
+        }
+        let value = child[2].trim().to_string();
+        if !value.is_empty() {
+            arguments.insert(tag_name.to_string(), value);
+        }
+    }
+
+    Some(ToolCall { name, arguments })
+}
+
+/// Parse the legacy inline format: `<tool_name param1="value1" param2="value2" />`.
+fn parse_tool_calls_inline(input: &str) -> Vec<ToolCall> {
     let mut calls = Vec::new();
     let tag_pattern = &*TAG_PATTERN;
     let attr_pattern = &*ATTR_PATTERN;
@@ -889,6 +946,101 @@ Done! I've written the file."#;
         let msg = format_tool_result_message(&result);
         assert!(msg.contains("[Error]"));
         assert!(msg.contains("read_file"));
+    }
+
+    #[test]
+    fn parse_tool_block_format() {
+        let input = r#"Let me search for that file.
+
+<tool>
+  <name>search_files</name>
+  <pattern>**/testfile.md</pattern>
+</tool>
+
+Here are the results."#;
+        let calls = parse_tool_calls(input);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "search_files");
+        assert_eq!(calls[0].arguments.get("pattern").unwrap(), "**/testfile.md");
+    }
+
+    #[test]
+    fn parse_tool_block_multiple_params() {
+        let input = r#"<tool>
+  <name>search_content</name>
+  <pattern>fn main</pattern>
+  <path>./src</path>
+  <include>*.rs</include>
+</tool>"#;
+        let calls = parse_tool_calls(input);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "search_content");
+        assert_eq!(calls[0].arguments.get("pattern").unwrap(), "fn main");
+        assert_eq!(calls[0].arguments.get("path").unwrap(), "./src");
+        assert_eq!(calls[0].arguments.get("include").unwrap(), "*.rs");
+    }
+
+    #[test]
+    fn parse_multiple_tool_blocks() {
+        let input = r#"<tool>
+  <name>search_files</name>
+  <pattern>*.rs</pattern>
+</tool>
+<tool>
+  <name>read_file</name>
+  <path>/tmp/test.txt</path>
+</tool>"#;
+        let calls = parse_tool_calls(input);
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].name, "search_files");
+        assert_eq!(calls[1].name, "read_file");
+    }
+
+    #[test]
+    fn parse_tool_block_ignores_structural_tags() {
+        let input = r#"<tool>
+  <name>read_file</name>
+  <description>ignored</description>
+  <path>/tmp/test.txt</path>
+</tool>"#;
+        let calls = parse_tool_calls(input);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "read_file");
+        assert_eq!(calls[0].arguments.get("path").unwrap(), "/tmp/test.txt");
+        assert!(calls[0].arguments.get("description").is_none());
+    }
+
+    #[test]
+    fn parse_tool_block_with_tool_tag_todo() {
+        let input = r#"<tool>
+  <name>manage_todo</name>
+  <action>add</action>
+  <description>Write tests</description>
+</tool>"#;
+        let calls = parse_tool_calls(input);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "manage_todo");
+        assert_eq!(calls[0].arguments.get("action").unwrap(), "add");
+    }
+
+    #[test]
+    fn parse_tool_block_handles_empty_body() {
+        let input = r#"<tool>
+  <name>list_files</name>
+  <path>.</path>
+</tool>"#;
+        let calls = parse_tool_calls(input);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "list_files");
+        assert_eq!(calls[0].arguments.get("path").unwrap(), ".");
+    }
+
+    #[test]
+    fn parse_old_format_still_works() {
+        let input = r#"<read_file path="/tmp/test.txt" />"#;
+        let calls = parse_tool_calls(input);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "read_file");
     }
 
     #[test]
