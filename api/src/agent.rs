@@ -731,13 +731,13 @@ fn load_agent_instructions(cwd: &str) -> (Vec<String>, Vec<String>) {
 
     for &file in CANDIDATES {
         let path = std::path::Path::new(cwd).join(file);
-        if path.exists() {
-            if let Ok(content) = std::fs::read_to_string(&path) {
-                let trimmed = content.trim().to_string();
-                if !trimmed.is_empty() {
-                    filenames.push(file.to_string());
-                    chunks.push(format!("Instructions from {file}:\n{trimmed}"));
-                }
+        if path.exists()
+            && let Ok(content) = std::fs::read_to_string(&path)
+        {
+            let trimmed = content.trim().to_string();
+            if !trimmed.is_empty() {
+                filenames.push(file.to_string());
+                chunks.push(format!("Instructions from {file}:\n{trimmed}"));
             }
         }
     }

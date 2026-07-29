@@ -165,10 +165,10 @@ fn extract_context_window(model: &serde_json::Value) -> Option<u32> {
                 return Some(n as u32);
             }
             // Try string that can be parsed as number
-            if let Some(s) = val.as_str() {
-                if let Ok(n) = s.parse::<u32>() {
-                    return Some(n);
-                }
+            if let Some(s) = val.as_str()
+                && let Ok(n) = s.parse::<u32>()
+            {
+                return Some(n);
             }
         }
     }

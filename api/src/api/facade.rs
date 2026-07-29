@@ -667,10 +667,10 @@ fn estimate_max_context(model: &Option<String>, available_models: &[ModelInfo]) 
     };
 
     // 1. Stored metadata from provider API
-    if let Some(info) = available_models.iter().find(|m| m.id == *model_id) {
-        if let Some(ctx) = info.context_window {
-            return ctx as usize;
-        }
+    if let Some(info) = available_models.iter().find(|m| m.id == *model_id)
+        && let Some(ctx) = info.context_window
+    {
+        return ctx as usize;
     }
 
     // 2. Static lookup
