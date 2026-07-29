@@ -8,10 +8,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style, Stylize},
     text::{Line, Span, Text},
-    widgets::{
-        Block, Borders, Clear, List, ListItem, Paragraph, Scrollbar, ScrollbarOrientation,
-        ScrollbarState, Wrap,
-    },
+    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap},
 };
 use tokio::sync::oneshot;
 
@@ -656,30 +653,6 @@ impl App {
 
         f.render_widget(Clear, popup_area);
         f.render_widget(list, popup_area);
-
-        if filtered.len() > max_visible {
-            let max_offset = filtered.len().saturating_sub(max_visible);
-            let scroll_pos = if max_offset > 0 {
-                (self.completion_offset as f64 / max_offset as f64 * (filtered.len() - 1) as f64)
-                    .round() as usize
-            } else {
-                0
-            };
-            let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-                .thumb_symbol("█")
-                .track_symbol(Some("│"))
-                .style(Style::default().fg(Color::DarkGray));
-            let mut state = ScrollbarState::new(filtered.len())
-                .position(scroll_pos)
-                .viewport_content_length(max_visible);
-            let scrollbar_area = Rect::new(
-                popup_area.x + popup_area.width - 2,
-                popup_area.y + 1,
-                1,
-                popup_area.height - 2,
-            );
-            f.render_stateful_widget(scrollbar, scrollbar_area, &mut state);
-        }
     }
 }
 
