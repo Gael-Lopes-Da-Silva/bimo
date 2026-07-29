@@ -637,6 +637,7 @@ fn current_session_context() -> crate::session::SessionContext {
         .unwrap_or_else(|_| "<unknown>".into());
     let ctx = build_project_context(&cwd);
     crate::session::SessionContext {
+        cwd,
         git_branch: ctx.git_branch,
         agent_instructions: ctx.agent_instruction_files,
     }

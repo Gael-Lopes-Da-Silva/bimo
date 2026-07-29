@@ -6,10 +6,13 @@ use crate::todo::TodoList;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-/// Contextual metadata about the project/environment at session creation.
+/// Contextual metadata about the project/environment.
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct SessionContext {
-    /// The active git branch at session creation time, if any.
+    /// The current working directory.
+    #[serde(default)]
+    pub cwd: String,
+    /// The active git branch, if any.
     #[serde(default)]
     pub git_branch: Option<String>,
     /// Filenames of agent instruction files that were found and loaded
