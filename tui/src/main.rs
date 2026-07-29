@@ -595,7 +595,7 @@ impl App {
         let popup_height = max_visible as u16 + 2;
         let popup_width = (chat_area.width.saturating_sub(4)).min(80);
 
-        let popup_x = input_area.x + 1;
+        let popup_x = input_area.x;
         let popup_y = input_area.y.saturating_sub(popup_height);
 
         let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
