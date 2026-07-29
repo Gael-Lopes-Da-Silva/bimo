@@ -1,3 +1,4 @@
+use crate::api::dto::ChatStreamEvent;
 use crate::api::facade::estimate_tokens;
 use crate::command::{CommandContext, CommandRegistry, CommandResult};
 use crate::config::{AppConfig, CustomProviderConfig, ProviderPersistedConfig, ThinkingConfig};
@@ -7,6 +8,7 @@ use crate::prompts;
 use crate::provider::{self, ProviderInfo, ProviderRegistry, ProviderRuntime, UsageInfo};
 use crate::session::Session;
 use crate::tool::{self, ToolCall, ToolRegistry, ToolResult};
+use futures_util::StreamExt;
 use tracing;
 
 /// Maximum number of tool call iterations per chat request.
@@ -371,6 +373,146 @@ impl Agent {
         }
 
         // This should never be reached, but just in case
+        Err(BimoError::Provider(
+            "tool call loop exceeded maximum iterations".into(),
+        ))
+    }
+
+    /// Streaming variant of [`chat`]. Sends delta chunks and events through
+    /// the given channel as the LLM responds.
+    pub async fn chat_stream(
+        &mut self,
+        user_message: &str,
+        tx: tokio::sync::mpsc::Sender<ChatStreamEvent>,
+    ) -> Result<()> {
+        tracing::info!(message_len = user_message.len(), "chat_stream called");
+        let runtime = self
+            .runtime
+            .as_ref()
+            .ok_or_else(|| BimoError::Provider("no provider selected".into()))?
+            .clone();
+        let model = self
+            .config
+            .selected_model
+            .clone()
+            .ok_or_else(|| BimoError::Model("no model selected".into()))?;
+
+        tracing::debug!(provider = %runtime.id, model = %model, session_id = %self.session.id, "starting streaming chat");
+
+        self.inject_todo_context();
+
+        let estimated_tokens = Some(estimate_tokens(user_message, None));
+        self.session
+            .add_user_message_with_tokens(user_message, estimated_tokens);
+
+        for iteration in 0..=MAX_TOOL_ITERATIONS {
+            let messages = self.session.to_chat_messages();
+            let mut stream = Box::pin(
+                provider::chat_completion_streaming(
+                    &runtime,
+                    &messages,
+                    &model,
+                    &self.config.thinking,
+                )
+                .await?,
+            );
+
+            let mut content = String::new();
+
+            while let Some(chunk_result) = stream.next().await {
+                match chunk_result {
+                    Ok(chunk) => {
+                        if let Some(delta) =
+                            provider::extract_stream_delta(&chunk, &runtime.request_body_format)
+                        {
+                            content.push_str(&delta);
+                            let _ = tx
+                                .send(ChatStreamEvent::Content {
+                                    delta: delta.clone(),
+                                })
+                                .await;
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!(error = %e, "stream error");
+                        let _ = tx
+                            .send(ChatStreamEvent::Error {
+                                message: e.to_string(),
+                            })
+                            .await;
+                        return Ok(());
+                    }
+                }
+            }
+
+            let tool_calls = tool::call::parse_tool_calls(&content);
+
+            if tool_calls.is_empty() || iteration == MAX_TOOL_ITERATIONS {
+                let estimated_tokens = Some(estimate_tokens(&content, Some(&model)));
+                self.session.add_assistant_response(
+                    &content,
+                    Some(model.clone()),
+                    Some(runtime.id.clone()),
+                    estimated_tokens,
+                );
+                tracing::info!(
+                    model = ?model,
+                    content_len = content.len(),
+                    total_tool_calls = iteration,
+                    "chat_stream done"
+                );
+                let _ = tx
+                    .send(ChatStreamEvent::Done {
+                        model: Some(model),
+                        usage: None,
+                        session_id: self.session.id.clone(),
+                    })
+                    .await;
+                return Ok(());
+            }
+
+            // Tool calls found — add assistant response, execute tools, loop
+            let estimated_tokens = Some(estimate_tokens(&content, Some(&model)));
+            self.session.add_assistant_response(
+                &content,
+                Some(model.clone()),
+                Some(runtime.id.clone()),
+                estimated_tokens,
+            );
+
+            for call in &tool_calls {
+                tracing::debug!(tool = %call.name, "streaming tool start");
+                let _ = tx
+                    .send(ChatStreamEvent::ToolStart {
+                        tool: call.name.clone(),
+                        args: serde_json::to_value(&call.arguments).ok(),
+                    })
+                    .await;
+
+                let result = tool::call::execute_tool_call(call, &self.tool_registry).await;
+
+                if call.name == "manage_todo"
+                    && !result.is_error
+                    && let Ok(action) = tool::call::parse_todo_action(&call.arguments)
+                {
+                    let todo_result =
+                        tool::call::apply_todo_action(&action, &mut self.session.todos);
+                    let todo_msg = format!("[Todo: {}]", todo_result);
+                    self.session.add_tool_message(&todo_msg);
+                }
+
+                let _ = tx
+                    .send(ChatStreamEvent::ToolResult {
+                        tool: result.name.clone(),
+                        is_error: result.is_error,
+                    })
+                    .await;
+
+                let result_msg = tool::call::format_tool_result_message(&result);
+                self.session.add_tool_message(&result_msg);
+            }
+        }
+
         Err(BimoError::Provider(
             "tool call loop exceeded maximum iterations".into(),
         ))

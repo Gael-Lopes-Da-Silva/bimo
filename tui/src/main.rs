@@ -1,5 +1,5 @@
 use bimo_api::BimoApi;
-use bimo_api::api::dto::{ApiResponse, ChatRequest, CommandRequest};
+use bimo_api::api::dto::{ApiResponse, ChatRequest, ChatStreamEvent, CommandRequest};
 use crossterm::event::{
     Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEventKind,
 };
@@ -12,7 +12,7 @@ use ratatui::{
     text::{Line, Span, Text},
     widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap},
 };
-use tokio::sync::oneshot;
+use tokio::sync::mpsc;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -30,19 +30,20 @@ enum Status {
 enum WorkerMsg {
     Chat {
         message: String,
-        tx: oneshot::Sender<WorkerResult>,
+        tx: mpsc::Sender<WorkerResult>,
     },
     Command {
         command: String,
-        tx: oneshot::Sender<WorkerResult>,
+        tx: mpsc::Sender<WorkerResult>,
     },
     ListCommands {
-        tx: oneshot::Sender<WorkerResult>,
+        tx: mpsc::Sender<WorkerResult>,
     },
 }
 
 enum WorkerResult {
     Response(ApiResponse),
+    StreamEvent(ChatStreamEvent),
 }
 
 struct App {
@@ -51,7 +52,7 @@ struct App {
     input: String,
     cursor: usize,
     status: Status,
-    pending_rx: Option<oneshot::Receiver<WorkerResult>>,
+    pending_rx: Option<mpsc::Receiver<WorkerResult>>,
     scroll: usize,
     auto_scroll: bool,
     should_quit: bool,
@@ -104,7 +105,7 @@ impl App {
     }
 
     async fn refresh_state(&mut self) {
-        let (tx, rx) = oneshot::channel();
+        let (tx, mut rx) = mpsc::channel(1);
         if self
             .worker_tx
             .send(WorkerMsg::Command {
@@ -115,7 +116,7 @@ impl App {
         {
             return;
         }
-        if let Ok(WorkerResult::Response(resp)) = rx.await
+        if let Some(WorkerResult::Response(resp)) = rx.recv().await
             && let Some(data) = resp.data
         {
             self.provider = data["provider"].as_str().map(String::from);
@@ -156,13 +157,13 @@ impl App {
             match &mut self.pending_rx {
                 Some(rx) => {
                     tokio::select! {
-                        event = rx => {
+                        event = rx.recv() => {
                             match event {
-                                Ok(WorkerResult::Response(resp)) => self.handle_response(resp).await,
-                                Err(_) => {
+                                Some(WorkerResult::Response(resp)) => self.handle_response(resp).await,
+                                Some(WorkerResult::StreamEvent(evt)) => self.handle_stream_event(evt).await,
+                                None => {
                                     self.status = Status::Ready;
                                     self.pending_rx = None;
-                                    self.add_msg("error", "Operation cancelled.");
                                 }
                             }
                         }
@@ -536,7 +537,7 @@ impl App {
 
     fn send_chat(&mut self, msg: String) {
         self.add_msg("user", &msg);
-        let (tx, rx) = oneshot::channel();
+        let (tx, rx) = mpsc::channel(256);
         if self
             .worker_tx
             .send(WorkerMsg::Chat { message: msg, tx })
@@ -555,7 +556,7 @@ impl App {
             return;
         }
         self.add_msg("command", &cmd);
-        let (tx, rx) = oneshot::channel();
+        let (tx, rx) = mpsc::channel(1);
         if self
             .worker_tx
             .send(WorkerMsg::Command { command: cmd, tx })
@@ -604,6 +605,40 @@ impl App {
                 "info",
                 "No provider configured. Use /provider to select one.",
             );
+        }
+    }
+
+    async fn handle_stream_event(&mut self, evt: ChatStreamEvent) {
+        match evt {
+            ChatStreamEvent::Content { delta } => {
+                if self.messages.last().map(|m| m.role.as_str()) != Some("assistant") {
+                    self.add_msg("assistant", &delta);
+                } else if let Some(last) = self.messages.last_mut() {
+                    last.content.push_str(&delta);
+                }
+            }
+            ChatStreamEvent::ToolStart { tool, args: _ } => {
+                self.add_msg("info", &format!("⚡ {tool}"));
+            }
+            ChatStreamEvent::ToolResult { tool, is_error } => {
+                let icon = if is_error { "✗" } else { "✓" };
+                self.add_msg("info", &format!("{icon} {tool}"));
+            }
+            ChatStreamEvent::Done { model, .. } => {
+                self.status = Status::Ready;
+                self.pending_rx = None;
+                self.auto_scroll = true;
+                if let Some(m) = model {
+                    self.model = Some(m);
+                }
+                self.refresh_state().await;
+            }
+            ChatStreamEvent::Error { message } => {
+                self.status = Status::Ready;
+                self.pending_rx = None;
+                self.auto_scroll = true;
+                self.add_msg("error", &message);
+            }
         }
     }
 
@@ -805,21 +840,31 @@ fn spawn_worker() -> tokio::sync::mpsc::UnboundedSender<WorkerMsg> {
         while let Some(msg) = rx.recv().await {
             match msg {
                 WorkerMsg::Chat { message, tx } => {
-                    let resp = api
-                        .chat(ChatRequest {
+                    let (evt_tx, mut evt_rx) = mpsc::channel::<ChatStreamEvent>(256);
+                    let fwd_tx = tx.clone();
+                    tokio::spawn(async move {
+                        while let Some(evt) = evt_rx.recv().await {
+                            if fwd_tx.send(WorkerResult::StreamEvent(evt)).await.is_err() {
+                                break;
+                            }
+                        }
+                    });
+                    api.chat_stream(
+                        ChatRequest {
                             message,
                             session_id: None,
-                        })
-                        .await;
-                    let _ = tx.send(WorkerResult::Response(resp));
+                        },
+                        evt_tx,
+                    )
+                    .await;
                 }
                 WorkerMsg::Command { command, tx } => {
                     let resp = api.execute_command(CommandRequest { command }).await;
-                    let _ = tx.send(WorkerResult::Response(resp));
+                    let _ = tx.send(WorkerResult::Response(resp)).await;
                 }
                 WorkerMsg::ListCommands { tx } => {
                     let resp = api.list_commands();
-                    let _ = tx.send(WorkerResult::Response(resp));
+                    let _ = tx.send(WorkerResult::Response(resp)).await;
                 }
             }
         }
@@ -849,7 +894,7 @@ async fn main() -> Result<()> {
 
     // Get initial state and commands
     {
-        let (tx, rx) = oneshot::channel();
+        let (tx, mut rx) = mpsc::channel(1);
         if app
             .worker_tx
             .send(WorkerMsg::Command {
@@ -857,16 +902,16 @@ async fn main() -> Result<()> {
                 tx,
             })
             .is_ok()
-            && let Ok(WorkerResult::Response(resp)) = rx.await
+            && let Some(WorkerResult::Response(resp)) = rx.recv().await
             && let Some(data) = resp.data
         {
             app.set_initial_state(&data);
         }
     }
     {
-        let (tx, rx) = oneshot::channel();
+        let (tx, mut rx) = mpsc::channel(1);
         if app.worker_tx.send(WorkerMsg::ListCommands { tx }).is_ok()
-            && let Ok(WorkerResult::Response(resp)) = rx.await
+            && let Some(WorkerResult::Response(resp)) = rx.recv().await
             && let Some(data) = resp.data
             && let Some(cmds) = data["commands"].as_array()
         {

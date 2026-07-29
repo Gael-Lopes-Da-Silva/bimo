@@ -387,6 +387,39 @@ impl BimoApi {
         }
     }
 
+    /// Streaming chat — sends `ChatStreamEvent`s through `tx` as the LLM
+    /// responds, then persists session state.
+    pub async fn chat_stream(
+        &mut self,
+        req: ChatRequest,
+        tx: tokio::sync::mpsc::Sender<ChatStreamEvent>,
+    ) {
+        tracing::info!(message_len = req.message.len(), "chat_stream called");
+
+        if let Some(sid) = &req.session_id
+            && let Err(e) = self.activate_session(sid)
+        {
+            tracing::error!(error = %e, "chat_stream session switch failed");
+            let _ = tx
+                .send(ChatStreamEvent::Error {
+                    message: e.to_string(),
+                })
+                .await;
+            return;
+        }
+
+        if let Err(e) = self.agent.chat_stream(&req.message, tx.clone()).await {
+            let _ = tx
+                .send(ChatStreamEvent::Error {
+                    message: e.to_string(),
+                })
+                .await;
+        }
+
+        self.sync_active_to_pool();
+        self.persist_active_session();
+    }
+
     // -----------------------------------------------------------------------
     // Session
     // -----------------------------------------------------------------------

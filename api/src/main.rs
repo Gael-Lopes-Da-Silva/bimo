@@ -6,9 +6,6 @@ use axum::{
     routing::{get, post},
 };
 use bimo_api::api::*;
-use bimo_api::provider;
-use bimo_api::tool;
-use futures_util::StreamExt;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tower_http::cors::{Any, CorsLayer};
@@ -180,191 +177,29 @@ async fn chat(
 async fn chat_stream(State(state): State<AppState>, Json(req): Json<ChatRequest>) -> Response {
     tracing::info!(message_len = req.message.len(), "POST /api/chat/stream");
 
-    let (tx, mut rx) =
-        tokio::sync::mpsc::channel::<Result<ChatStreamEvent, bimo_api::BimoError>>(64);
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<ChatStreamEvent>(64);
 
     tokio::spawn(async move {
-        let result = run_chat_stream(state, &req.message, req.session_id.as_deref(), &tx).await;
-        if let Err(e) = result {
-            let _ = tx
-                .send(Ok(ChatStreamEvent::Error {
-                    message: e.to_string(),
-                }))
-                .await;
-        }
+        let mut api = state.write().await;
+        api.chat_stream(req, tx).await;
     });
 
     let stream = async_stream::stream! {
-        while let Some(msg) = rx.recv().await {
-            match msg {
-                Ok(event) => {
-                    let data = match serde_json::to_string(&event) {
-                        Ok(d) => d,
-                        Err(_) => continue,
-                    };
-                    yield Ok::<_, std::convert::Infallible>(format!("data: {data}\n\n"));
-                }
-                Err(_) => break,
-            }
+        while let Some(event) = rx.recv().await {
+            let data = match serde_json::to_string(&event) {
+                Ok(d) => d,
+                Err(_) => continue,
+            };
+            yield Ok::<_, std::convert::Infallible>(format!("data: {data}\n\n"));
         }
     };
-
-    let pinned = Box::pin(stream);
 
     Response::builder()
         .header("Content-Type", "text/event-stream")
         .header("Cache-Control", "no-cache")
         .header("Connection", "keep-alive")
-        .body(axum::body::Body::from_stream(pinned))
+        .body(axum::body::Body::from_stream(Box::pin(stream)))
         .unwrap()
-}
-
-/// Runs the agent tool-calling loop, sending streaming events through `tx`.
-async fn run_chat_stream(
-    state: AppState,
-    user_message: &str,
-    session_id: Option<&str>,
-    tx: &tokio::sync::mpsc::Sender<Result<ChatStreamEvent, bimo_api::BimoError>>,
-) -> bimo_api::Result<()> {
-    const MAX_TOOL_ITERATIONS: usize = 20;
-
-    let mut first = true;
-
-    for iteration in 0..=MAX_TOOL_ITERATIONS {
-        {
-            let mut api = state.write().await;
-
-            // Switch to the target session if specified
-            if let Some(sid) = session_id
-                && let Err(e) = api.activate_session(sid)
-            {
-                let _ = tx.try_send(Err(e));
-                return Ok(());
-            }
-            let runtime = api
-                .agent
-                .runtime
-                .as_ref()
-                .ok_or_else(|| bimo_api::BimoError::Provider("no provider selected".into()))?
-                .clone();
-            let model_id = api
-                .agent
-                .config
-                .selected_model
-                .clone()
-                .ok_or_else(|| bimo_api::BimoError::Model("no model selected".into()))?;
-            let thinking = api.agent.config.thinking.clone();
-
-            if first {
-                // Inject todo context before the user message
-                if !api.agent.session.todos.is_empty() {
-                    let context = api.agent.session.todos.render_context();
-                    api.agent
-                        .session
-                        .add_tool_message(&format!("[Current Todo State]\n{}", context));
-                }
-                let estimated_tokens =
-                    Some(bimo_api::api::facade::estimate_tokens(user_message, None));
-                api.agent
-                    .session
-                    .add_user_message_with_tokens(user_message, estimated_tokens);
-                first = false;
-            }
-
-            let messages = api.agent.session.to_chat_messages();
-            let mut stream = Box::pin(
-                provider::chat_completion_streaming(&runtime, &messages, &model_id, &thinking)
-                    .await?,
-            );
-
-            let mut content = String::new();
-
-            while let Some(chunk_result) = stream.next().await {
-                match chunk_result {
-                    Ok(chunk) => {
-                        if let Some(delta) =
-                            provider::extract_stream_delta(&chunk, &runtime.request_body_format)
-                        {
-                            content.push_str(&delta);
-                            let _ = tx.try_send(Ok(ChatStreamEvent::Content {
-                                delta: delta.clone(),
-                            }));
-                        }
-                    }
-                    Err(e) => {
-                        let _ = tx.try_send(Err(e));
-                        return Ok(());
-                    }
-                }
-            }
-
-            let tool_calls = tool::call::parse_tool_calls(&content);
-
-            if tool_calls.is_empty() || iteration == MAX_TOOL_ITERATIONS {
-                let sid = api.agent.session.id.clone();
-                let estimated_tokens = Some(bimo_api::api::facade::estimate_tokens(
-                    &content,
-                    Some(&model_id),
-                ));
-                api.agent.session.add_assistant_response(
-                    &content,
-                    Some(model_id.clone()),
-                    Some(runtime.id.clone()),
-                    estimated_tokens,
-                );
-                // Persist the session to the pool and disk
-                api.sync_active_to_pool();
-                api.persist_active_session();
-                let _ = tx.try_send(Ok(ChatStreamEvent::Done {
-                    model: Some(model_id),
-                    usage: None,
-                    session_id: sid,
-                }));
-                return Ok(());
-            }
-
-            let estimated_tokens = Some(bimo_api::api::facade::estimate_tokens(
-                &content,
-                Some(&model_id),
-            ));
-            api.agent.session.add_assistant_response(
-                &content,
-                Some(model_id.clone()),
-                Some(runtime.id.clone()),
-                estimated_tokens,
-            );
-
-            for call in &tool_calls {
-                let _ = tx.try_send(Ok(ChatStreamEvent::ToolStart {
-                    tool: call.name.clone(),
-                    args: serde_json::to_value(&call.arguments).ok(),
-                }));
-
-                let result = tool::call::execute_tool_call(call, &api.agent.tool_registry).await;
-
-                // Handle todo actions
-                if call.name == "manage_todo"
-                    && !result.is_error
-                    && let Ok(action) = tool::call::parse_todo_action(&call.arguments)
-                {
-                    let todo_result =
-                        tool::call::apply_todo_action(&action, &mut api.agent.session.todos);
-                    let todo_msg = format!("[Todo: {}]", todo_result);
-                    api.agent.session.add_tool_message(&todo_msg);
-                }
-
-                let _ = tx.try_send(Ok(ChatStreamEvent::ToolResult {
-                    tool: result.name.clone(),
-                    is_error: result.is_error,
-                }));
-
-                let result_msg = tool::call::format_tool_result_message(&result);
-                api.agent.session.add_tool_message(&result_msg);
-            }
-        }
-    }
-
-    Ok(())
 }
 
 async fn get_session(State(state): State<AppState>) -> Json<ApiResponse> {
