@@ -714,7 +714,7 @@ impl App {
         }
     }
 
-    fn render_completion_popup(&mut self, f: &mut Frame, chat_area: Rect, input_area: Rect) {
+    fn render_completion_popup(&mut self, f: &mut Frame, _chat_area: Rect, input_area: Rect) {
         if !self.completion_visible {
             return;
         }
@@ -726,9 +726,10 @@ impl App {
 
         let max_visible = 10.min(filtered.len());
         let popup_height = max_visible as u16 + 2;
-        let popup_width = (chat_area.width.saturating_sub(4)).min(80);
+        let area = f.area();
+        let popup_width = area.width;
 
-        let popup_x = input_area.x;
+        let popup_x = area.x;
         let popup_y = input_area.y.saturating_sub(popup_height);
 
         let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
