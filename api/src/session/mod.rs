@@ -19,6 +19,12 @@ pub struct SessionContext {
     /// (e.g. "AGENTS.md", "CLAUDE.md").
     #[serde(default)]
     pub agent_instructions: Vec<String>,
+    /// Loaded agent skills.
+    #[serde(default)]
+    pub skills: Vec<crate::skill::Skill>,
+    /// Available prompt templates.
+    #[serde(default)]
+    pub prompts: Vec<crate::command::prompt::PromptTemplate>,
 }
 
 /// The role of a message participant.

@@ -640,6 +640,8 @@ fn current_session_context() -> crate::session::SessionContext {
         cwd,
         git_branch: ctx.git_branch,
         agent_instructions: ctx.agent_instruction_files,
+        skills: crate::skill::list_skills(),
+        prompts: crate::command::prompt::list_templates(),
     }
 }
 
