@@ -8,7 +8,10 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style, Stylize},
     text::{Line, Span, Text},
-    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap},
+    widgets::{
+        Block, Borders, Clear, List, ListItem, Paragraph, Scrollbar, ScrollbarOrientation,
+        ScrollbarState, Wrap,
+    },
 };
 use tokio::sync::oneshot;
 
@@ -61,6 +64,7 @@ struct App {
     commands: Vec<(String, String)>,
     completion_visible: bool,
     completion_selected: usize,
+    completion_offset: usize,
 }
 
 impl App {
@@ -83,6 +87,7 @@ impl App {
             commands: Vec::new(),
             completion_visible: false,
             completion_selected: 0,
+            completion_offset: 0,
         }
     }
 
@@ -107,17 +112,17 @@ impl App {
         {
             return;
         }
-        if let Ok(WorkerResult::Response(resp)) = rx.await {
-            if let Some(data) = resp.data {
-                self.provider = data["provider"].as_str().map(String::from);
-                self.model = data["model"].as_str().map(String::from);
-                self.session_id = data["session_id"]
-                    .as_str()
-                    .map(String::from)
-                    .unwrap_or_default();
-                self.message_count = data["message_count"].as_u64().unwrap_or(0) as usize;
-                self.needs_config = data["needs_configuration"].as_bool().unwrap_or(true);
-            }
+        if let Ok(WorkerResult::Response(resp)) = rx.await
+            && let Some(data) = resp.data
+        {
+            self.provider = data["provider"].as_str().map(String::from);
+            self.model = data["model"].as_str().map(String::from);
+            self.session_id = data["session_id"]
+                .as_str()
+                .map(String::from)
+                .unwrap_or_default();
+            self.message_count = data["message_count"].as_u64().unwrap_or(0) as usize;
+            self.needs_config = data["needs_configuration"].as_bool().unwrap_or(true);
         }
     }
 
@@ -206,6 +211,20 @@ impl App {
         }
     }
 
+    fn sync_completion_scroll(&mut self, total: usize) {
+        let visible = 10;
+        if total <= visible {
+            self.completion_offset = 0;
+        } else if self.completion_selected < self.completion_offset {
+            self.completion_offset = self.completion_selected;
+        } else if self.completion_selected >= self.completion_offset + visible {
+            self.completion_offset = self
+                .completion_selected
+                .saturating_add(1)
+                .saturating_sub(visible);
+        }
+    }
+
     fn handle_completion_key(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Up => {
@@ -215,16 +234,19 @@ impl App {
                 } else {
                     self.completion_selected - 1
                 };
+                self.sync_completion_scroll(count);
             }
             KeyCode::Down => {
                 let count = self.filtered_completions().len();
                 self.completion_selected = (self.completion_selected + 1) % count;
+                self.sync_completion_scroll(count);
             }
             KeyCode::Tab | KeyCode::Enter => {
                 let filtered = self.filtered_completions();
                 if let Some((name, _)) = filtered.get(self.completion_selected) {
                     self.input.clear();
                     self.cursor = 0;
+                    self.completion_offset = 0;
                     if matches!(key.code, KeyCode::Enter) {
                         self.completion_visible = false;
                         self.exec_cmd(format!("/{name}"));
@@ -237,6 +259,7 @@ impl App {
             }
             KeyCode::Esc => {
                 self.completion_visible = false;
+                self.completion_offset = 0;
             }
             KeyCode::Backspace => {
                 if self.cursor > 0 {
@@ -253,20 +276,24 @@ impl App {
             }
             KeyCode::Left => {
                 self.completion_visible = false;
+                self.completion_offset = 0;
                 self.cursor = self.cursor.saturating_sub(1);
             }
             KeyCode::Right => {
                 self.completion_visible = false;
+                self.completion_offset = 0;
                 if self.cursor < self.input.len() {
                     self.cursor += 1;
                 }
             }
             KeyCode::Home => {
                 self.completion_visible = false;
+                self.completion_offset = 0;
                 self.cursor = 0;
             }
             KeyCode::End => {
                 self.completion_visible = false;
+                self.completion_offset = 0;
                 self.cursor = self.input.len();
             }
             KeyCode::Char(c) => {
@@ -367,12 +394,15 @@ impl App {
                 self.completion_visible = true;
                 if self.completion_selected >= filtered.len() {
                     self.completion_selected = 0;
+                    self.completion_offset = 0;
                 }
+                self.sync_completion_scroll(filtered.len());
                 return;
             }
         }
         self.completion_visible = false;
         self.completion_selected = 0;
+        self.completion_offset = 0;
     }
 
     fn send_chat(&mut self, msg: String) {
@@ -420,10 +450,10 @@ impl App {
                     if let Some(model) = data["model"].as_str() {
                         self.model = Some(model.to_string());
                     }
-                } else if let Some(text) = output {
-                    if !text.is_empty() {
-                        self.add_msg("result", text);
-                    }
+                } else if let Some(text) = output
+                    && !text.is_empty()
+                {
+                    self.add_msg("result", text);
                 }
             }
         } else {
@@ -451,7 +481,7 @@ impl App {
         });
     }
 
-    fn render(&self, f: &mut Frame) {
+    fn render(&mut self, f: &mut Frame) {
         let area = f.area();
         let chunks = Layout::default()
             .direction(Direction::Vertical)
@@ -551,7 +581,7 @@ impl App {
         }
     }
 
-    fn render_completion_popup(&self, f: &mut Frame, chat_area: Rect, input_area: Rect) {
+    fn render_completion_popup(&mut self, f: &mut Frame, chat_area: Rect, input_area: Rect) {
         if !self.completion_visible {
             return;
         }
@@ -561,37 +591,59 @@ impl App {
             return;
         }
 
-        let max_items = 10.min(filtered.len());
-        let popup_height = max_items as u16 + 2;
-        let popup_width = 60u16.min(chat_area.width.saturating_sub(4));
+        let max_visible = 10.min(filtered.len());
+        let popup_height = max_visible as u16 + 2;
+        let popup_width = (chat_area.width.saturating_sub(4)).min(80);
 
         let popup_x = input_area.x + 1;
         let popup_y = input_area.y.saturating_sub(popup_height);
 
         let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
 
-        let items: Vec<ListItem> = filtered
+        // content_width excludes borders (2 chars)
+        let content_width = popup_width.saturating_sub(2) as usize;
+        let name_col_width = 24.min(content_width.saturating_sub(4));
+
+        let end = (self.completion_offset + max_visible).min(filtered.len());
+        let visible_slice = &filtered[self.completion_offset..end];
+
+        let items: Vec<ListItem> = visible_slice
             .iter()
-            .take(max_items)
             .enumerate()
             .map(|(i, (name, desc))| {
-                let selected = i == self.completion_selected;
-                let style = if selected {
-                    Style::default()
-                        .bg(Color::Blue)
-                        .fg(Color::White)
-                        .add_modifier(Modifier::BOLD)
+                let abs_idx = self.completion_offset + i;
+                let selected = abs_idx == self.completion_selected;
+                let cmd = format!("/{}", name);
+                let padded_cmd = format!(" {cmd:<name_col_width$}");
+
+                let desc_avail = content_width.saturating_sub(name_col_width + 3);
+                let desc_text = if desc_avail >= 4 && desc.len() > desc_avail {
+                    format!("{}…", &desc[..desc_avail.saturating_sub(1)])
+                } else if desc_avail >= 4 {
+                    desc.to_string()
                 } else {
-                    Style::default().fg(Color::White)
+                    String::new()
                 };
 
-                let text = if popup_width as usize > name.len() + desc.len() + 5 {
-                    format!(" /{}  {}", name, desc)
+                let base = Style::default();
+                let (cmd_style, desc_style) = if selected {
+                    (
+                        base.bg(Color::Rgb(30, 60, 120))
+                            .fg(Color::White)
+                            .add_modifier(Modifier::BOLD),
+                        base.bg(Color::Rgb(30, 60, 120)).fg(Color::White),
+                    )
                 } else {
-                    format!(" /{}", name)
+                    (
+                        base.fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                        base.fg(Color::White),
+                    )
                 };
 
-                ListItem::new(Line::from(Span::styled(text, style)))
+                ListItem::new(Line::from(vec![
+                    Span::styled(padded_cmd, cmd_style),
+                    Span::styled(desc_text, desc_style),
+                ]))
             })
             .collect();
 
@@ -600,15 +652,34 @@ impl App {
             .title(" Commands ")
             .border_style(Style::default().fg(Color::Cyan));
 
-        let list = List::new(items).block(block).highlight_style(
-            Style::default()
-                .bg(Color::Blue)
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD),
-        );
+        let list = List::new(items).block(block);
 
         f.render_widget(Clear, popup_area);
         f.render_widget(list, popup_area);
+
+        if filtered.len() > max_visible {
+            let max_offset = filtered.len().saturating_sub(max_visible);
+            let scroll_pos = if max_offset > 0 {
+                (self.completion_offset as f64 / max_offset as f64 * (filtered.len() - 1) as f64)
+                    .round() as usize
+            } else {
+                0
+            };
+            let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .thumb_symbol("█")
+                .track_symbol(Some("│"))
+                .style(Style::default().fg(Color::DarkGray));
+            let mut state = ScrollbarState::new(filtered.len())
+                .position(scroll_pos)
+                .viewport_content_length(max_visible);
+            let scrollbar_area = Rect::new(
+                popup_area.x + popup_area.width - 2,
+                popup_area.y + 1,
+                1,
+                popup_area.height - 2,
+            );
+            f.render_stateful_widget(scrollbar, scrollbar_area, &mut state);
+        }
     }
 }
 
@@ -668,32 +739,28 @@ async fn main() -> Result<()> {
                 tx,
             })
             .is_ok()
+            && let Ok(WorkerResult::Response(resp)) = rx.await
+            && let Some(data) = resp.data
         {
-            if let Ok(WorkerResult::Response(resp)) = rx.await {
-                if let Some(data) = resp.data {
-                    app.set_initial_state(&data);
-                }
-            }
+            app.set_initial_state(&data);
         }
     }
     {
         let (tx, rx) = oneshot::channel();
-        if app.worker_tx.send(WorkerMsg::ListCommands { tx }).is_ok() {
-            if let Ok(WorkerResult::Response(resp)) = rx.await {
-                if let Some(data) = resp.data {
-                    if let Some(cmds) = data["commands"].as_array() {
-                        app.commands = cmds
-                            .iter()
-                            .filter_map(|c| {
-                                Some((
-                                    c["name"].as_str()?.to_string(),
-                                    c["description"].as_str()?.to_string(),
-                                ))
-                            })
-                            .collect();
-                    }
-                }
-            }
+        if app.worker_tx.send(WorkerMsg::ListCommands { tx }).is_ok()
+            && let Ok(WorkerResult::Response(resp)) = rx.await
+            && let Some(data) = resp.data
+            && let Some(cmds) = data["commands"].as_array()
+        {
+            app.commands = cmds
+                .iter()
+                .filter_map(|c| {
+                    Some((
+                        c["name"].as_str()?.to_string(),
+                        c["description"].as_str()?.to_string(),
+                    ))
+                })
+                .collect();
         }
     }
 
