@@ -62,7 +62,7 @@ impl SlashCommand for ProviderCommand {
                         } else {
                             ""
                         };
-                        format!("  {id} — {name}{sel}{cfgd}")
+                        format!("  {id:<16} {name:<16} {cfgd}{sel}")
                     })
                     .collect();
                 let output = format!("Available providers:\n{}", lines.join("\n"));

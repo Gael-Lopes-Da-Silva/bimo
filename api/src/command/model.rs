@@ -69,11 +69,11 @@ impl SlashCommand for ModelCommand {
                     .iter()
                     .map(|m| {
                         let sel = if Some(&m.id) == ctx.selected_model.as_ref() {
-                            " *"
+                            " [selected]"
                         } else {
                             ""
                         };
-                        format!("  {} — {}{sel}", m.id, m.name)
+                        format!("  {:<16} {:<16} {sel}", m.id, m.name)
                     })
                     .collect();
                 let output = format!("Available models:\n{}", lines.join("\n"));

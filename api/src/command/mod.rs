@@ -365,6 +365,10 @@ mod tests {
             pending_user_message: None,
             pending_system_message: None,
             loaded_skills: vec![],
+            providers: vec![],
+            configured_providers: vec![],
+            provider_configure_request: None,
+            provider_add_request: None,
         }
     }
 
