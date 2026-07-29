@@ -22,7 +22,7 @@ struct DisplayMessage {
 
 enum Status {
     Ready,
-    Busy(String),
+    Busy,
 }
 
 enum WorkerMsg {
@@ -178,13 +178,7 @@ impl App {
                 self.should_quit = true;
             }
             KeyCode::Char('c') if key.modifiers == KeyModifiers::CONTROL => {
-                if self.pending_rx.is_some() {
-                    self.status = Status::Ready;
-                    self.pending_rx = None;
-                    self.add_msg("info", "Cancelled.");
-                } else {
-                    self.should_quit = true;
-                }
+                self.should_quit = true;
             }
             KeyCode::Char('l') if key.modifiers == KeyModifiers::CONTROL => {
                 self.messages.retain(|m| m.role == "system");
@@ -267,7 +261,7 @@ impl App {
             return;
         }
         self.pending_rx = Some(rx);
-        self.status = Status::Busy("Thinking...".into());
+        self.status = Status::Busy;
     }
 
     fn exec_cmd(&mut self, cmd: String) {
@@ -282,7 +276,7 @@ impl App {
             return;
         }
         self.pending_rx = Some(rx);
-        self.status = Status::Busy("Running...".into());
+        self.status = Status::Busy;
     }
 
     async fn handle_response(&mut self, resp: ApiResponse) {
@@ -335,38 +329,11 @@ impl App {
         let area = f.area();
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(1),
-                Constraint::Min(0),
-                Constraint::Length(3),
-            ])
+            .constraints([Constraint::Min(0), Constraint::Length(3)])
             .split(area);
 
-        self.render_status(f, chunks[0]);
-        self.render_chat(f, chunks[1]);
-        self.render_input(f, chunks[2]);
-    }
-
-    fn render_status(&self, f: &mut Frame, area: Rect) {
-        let p = self.provider.as_deref().unwrap_or("<none>");
-        let m = self.model.as_deref().unwrap_or("<none>");
-        let busy = matches!(self.status, Status::Busy(_));
-        let label = match &self.status {
-            Status::Ready => "READY",
-            Status::Busy(msg) => msg.as_str(),
-        };
-
-        let style = if busy {
-            Style::default().bg(Color::Yellow).fg(Color::Black)
-        } else {
-            Style::default().bg(Color::DarkGray).fg(Color::White)
-        };
-
-        let text = format!(
-            " BIMO  │ {label}  │ {p}  │ {m}  │ {} msgs  │ Ctrl+Q quit",
-            self.messages.len()
-        );
-        f.render_widget(Paragraph::new(text).style(style), area);
+        self.render_chat(f, chunks[0]);
+        self.render_input(f, chunks[1]);
     }
 
     fn render_chat(&self, f: &mut Frame, area: Rect) {
@@ -434,7 +401,7 @@ impl App {
     }
 
     fn render_input(&self, f: &mut Frame, area: Rect) {
-        let is_busy = matches!(self.status, Status::Busy(_));
+        let is_busy = matches!(self.status, Status::Busy);
         let content = if is_busy {
             String::new()
         } else {
