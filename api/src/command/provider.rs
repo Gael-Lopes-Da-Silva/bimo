@@ -72,11 +72,24 @@ impl SlashCommand for ProviderCommand {
                     )));
                 }
                 ctx.selected_provider = Some(provider_id.to_string());
+                let requires_key = ctx
+                    .providers
+                    .iter()
+                    .find(|p| p.id == *provider_id)
+                    .map(|p| p.requires_api_key)
+                    .unwrap_or(false);
+                let output = if requires_key {
+                    format!(
+                        "Selected provider: {provider_id}. \
+                         This provider requires an API key — run /provider configure {provider_id} \
+                         to set it, or it won't work."
+                    )
+                } else {
+                    format!("Selected provider: {provider_id}. Run /model to see available models.")
+                };
                 Ok(CommandResult {
                     command: "provider".into(),
-                    output: format!(
-                        "Selected provider: {provider_id}. Run /model to see available models."
-                    ),
+                    output,
                     data: None,
                 })
             }

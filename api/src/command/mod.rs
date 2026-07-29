@@ -15,6 +15,7 @@ pub mod tree;
 use crate::config::ThinkingConfig;
 use crate::error::{BimoError, Result};
 use crate::model::ModelInfo;
+use crate::provider::ProviderInfo;
 use crate::session::SessionInfo;
 use crate::todo::TodoList;
 use crate::tool::Tool;
@@ -101,6 +102,7 @@ pub struct CommandContext {
     pub session_messages: Vec<crate::session::Message>,
     pub provider_ids: Vec<String>,
     pub provider_names: Vec<String>,
+    pub providers: Vec<ProviderInfo>,
     pub needs_configuration: bool,
     pub tools: Vec<Tool>,
     pub command_descriptions: Vec<(String, String)>,

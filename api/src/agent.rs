@@ -390,7 +390,7 @@ impl Agent {
         let mut ctx = self.build_command_context();
         ctx.active_session_id = active_session_id.to_string();
         ctx.all_sessions = all_sessions.to_vec();
-        let result = self
+        let mut result = self
             .command_registry
             .dispatch_async(input, &mut ctx)
             .await?;
@@ -475,6 +475,38 @@ impl Agent {
         }
 
         self.sync_from_command_context(&ctx);
+
+        // If a provider is selected but no runtime exists, try to resolve
+        if let Some(ref pid) = self.config.selected_provider.clone()
+            && self.runtime.is_none()
+        {
+            match self.provider_registry.resolve_runtime(pid, &self.config) {
+                Ok(rt) => {
+                    tracing::info!(provider_id = %pid, "runtime resolved after command");
+                    self.runtime = Some(rt);
+                    match self.fetch_models().await {
+                        Ok(models) => {
+                            if models.is_empty() {
+                                let warn = "\nWarning: provider returned no models.";
+                                if !result.output.contains(warn.trim()) {
+                                    result.output.push_str(warn);
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!(error = %e, "failed to fetch models after provider select");
+                        }
+                    }
+                }
+                Err(e) => {
+                    let warn = format!("\nWarning: {e}");
+                    if !result.output.contains(&warn) {
+                        result.output.push_str(&warn);
+                    }
+                }
+            }
+        }
+
         Ok(result)
     }
 
@@ -656,6 +688,7 @@ impl Agent {
             session_messages: self.session.messages.clone(),
             provider_ids: providers.iter().map(|p| p.id.clone()).collect(),
             provider_names: providers.iter().map(|p| p.name.clone()).collect(),
+            providers: providers.clone(),
             needs_configuration: self.needs_configuration(),
             tools: self.tool_registry.list().to_vec(),
             command_descriptions,

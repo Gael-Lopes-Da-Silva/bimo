@@ -37,10 +37,30 @@ impl SlashCommand for ModelCommand {
         match parts.first().copied() {
             Some("list") | None => {
                 if ctx.available_models.is_empty() {
+                    let output = if let Some(pid) = ctx.selected_provider.as_deref() {
+                        let needs_key = ctx
+                            .providers
+                            .iter()
+                            .find(|p| p.id == pid)
+                            .map(|p| p.requires_api_key)
+                            .unwrap_or(false);
+                        if needs_key {
+                            format!(
+                                "No models available. The '{pid}' provider requires an API key. \
+                                 Run /provider configure {pid} to set it."
+                            )
+                        } else {
+                            format!(
+                                "No models available from '{pid}'. \
+                                 Make sure the provider is running and accessible."
+                            )
+                        }
+                    } else {
+                        "No models available. Select a provider first with /provider.".into()
+                    };
                     return Ok(CommandResult {
                         command: "model".into(),
-                        output: "No models available. Select a provider first with /provider."
-                            .into(),
+                        output,
                         data: None,
                     });
                 }
