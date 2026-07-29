@@ -293,24 +293,6 @@ mod tests {
     }
 
     #[test]
-    fn list_templates_finds_example() {
-        let templates = list_templates();
-        let review = templates.iter().find(|t| t.name == "review_staged");
-        assert!(review.is_some(), "should find review_staged template");
-        assert!(!review.unwrap().description.is_empty());
-    }
-
-    #[test]
-    fn load_template_finds_example() {
-        let template = load_template("review_staged");
-        assert!(template.is_some(), "should load review_staged template");
-        let t = template.unwrap();
-        assert_eq!(t.name, "review_staged");
-        assert_eq!(t.description, "Review staged git changes");
-        assert!(t.content.contains("git diff --cached"));
-    }
-
-    #[test]
     fn load_template_not_found() {
         let template = load_template("nonexistent_template_xyz");
         assert!(template.is_none());

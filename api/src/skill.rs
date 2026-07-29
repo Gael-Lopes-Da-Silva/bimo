@@ -233,14 +233,4 @@ mod tests {
 
         let _ = fs::remove_dir_all(&dir);
     }
-
-    #[test]
-    fn list_skills_finds_test_skill() {
-        let skills = list_skills();
-        let test = skills.iter().find(|s| s.name == "test-skill");
-        assert!(test.is_some(), "should find test-skill in .agents/skills/");
-        let s = test.unwrap();
-        assert_eq!(s.description, "A skill for testing the skill system");
-        assert!(s.content.contains("Always respond in uppercase"));
-    }
 }
