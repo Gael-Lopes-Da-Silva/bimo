@@ -646,7 +646,9 @@ impl Agent {
 }
 
 /// Build a short project context string for the system prompt.
-/// Includes git branch (if available) and top-level directory listing.
+/// Includes git branch (if available), top-level directory listing,
+/// and contents of standard agent instruction files (AGENTS.md,
+/// CLAUDE.md, GEMINI.md, .github/copilot-instructions.md).
 pub(crate) fn build_project_context(cwd: &str) -> String {
     let mut parts: Vec<String> = Vec::new();
 
@@ -682,9 +684,41 @@ pub(crate) fn build_project_context(cwd: &str) -> String {
         }
     }
 
+    // Agent instruction files
+    for chunk in load_agent_instructions(cwd) {
+        parts.push(chunk);
+    }
+
     if parts.is_empty() {
         "No project context available.".into()
     } else {
         parts.join("\n")
     }
+}
+
+/// Read contents of standard agent instruction files from the project root.
+/// Supports: AGENTS.md, CLAUDE.md, GEMINI.md, .github/copilot-instructions.md
+fn load_agent_instructions(cwd: &str) -> Vec<String> {
+    const CANDIDATES: &[&str] = &[
+        "AGENTS.md",
+        "CLAUDE.md",
+        "GEMINI.md",
+        ".github/copilot-instructions.md",
+    ];
+
+    let mut instructions: Vec<String> = Vec::new();
+
+    for &file in CANDIDATES {
+        let path = std::path::Path::new(cwd).join(file);
+        if path.exists() {
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                let trimmed = content.trim().to_string();
+                if !trimmed.is_empty() {
+                    instructions.push(format!("Instructions from {file}:\n{trimmed}"));
+                }
+            }
+        }
+    }
+
+    instructions
 }
