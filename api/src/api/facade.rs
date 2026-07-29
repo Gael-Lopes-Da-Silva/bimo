@@ -647,7 +647,7 @@ fn current_session_context() -> crate::session::SessionContext {
 ///
 /// Uses `tiktoken-rs` to select the correct BPE tokenizer for the given model.
 /// Falls back to `o200k_base` (GPT-4o / o-series) when the model is unknown.
-fn estimate_tokens(text: &str, model: Option<&str>) -> usize {
+pub fn estimate_tokens(text: &str, model: Option<&str>) -> usize {
     let bpe = match model.and_then(|m| bpe_for_model(m).ok()) {
         Some(bpe) => bpe,
         None => o200k_base_singleton(),

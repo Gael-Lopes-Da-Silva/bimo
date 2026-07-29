@@ -263,7 +263,11 @@ async fn run_chat_stream(
                         .session
                         .add_tool_message(&format!("[Current Todo State]\n{}", context));
                 }
-                api.agent.session.add_user_message(user_message);
+                let estimated_tokens =
+                    Some(bimo_api::api::facade::estimate_tokens(user_message, None));
+                api.agent
+                    .session
+                    .add_user_message_with_tokens(user_message, estimated_tokens);
                 first = false;
             }
 
@@ -298,7 +302,16 @@ async fn run_chat_stream(
 
             if tool_calls.is_empty() || iteration == MAX_TOOL_ITERATIONS {
                 let sid = api.agent.session.id.clone();
-                api.agent.session.add_assistant_message(&content);
+                let estimated_tokens = Some(bimo_api::api::facade::estimate_tokens(
+                    &content,
+                    Some(&model_id),
+                ));
+                api.agent.session.add_assistant_response(
+                    &content,
+                    Some(model_id.clone()),
+                    Some(runtime.id.clone()),
+                    estimated_tokens,
+                );
                 // Persist the session to the pool and disk
                 api.sync_active_to_pool();
                 api.persist_active_session();
@@ -310,7 +323,16 @@ async fn run_chat_stream(
                 return Ok(());
             }
 
-            api.agent.session.add_assistant_message(&content);
+            let estimated_tokens = Some(bimo_api::api::facade::estimate_tokens(
+                &content,
+                Some(&model_id),
+            ));
+            api.agent.session.add_assistant_response(
+                &content,
+                Some(model_id.clone()),
+                Some(runtime.id.clone()),
+                estimated_tokens,
+            );
 
             for call in &tool_calls {
                 let _ = tx.try_send(Ok(ChatStreamEvent::ToolStart {

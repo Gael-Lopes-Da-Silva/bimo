@@ -543,11 +543,17 @@ mod tests {
                 role: Role::User,
                 content: "hello".into(),
                 timestamp: Utc::now(),
+                model: None,
+                provider: None,
+                estimated_tokens: None,
             },
             Message {
                 role: Role::Assistant,
                 content: "hi there".into(),
                 timestamp: Utc::now(),
+                model: None,
+                provider: None,
+                estimated_tokens: None,
             },
         ];
         let result = reg.dispatch("/tree", &mut ctx).unwrap();
@@ -568,11 +574,17 @@ mod tests {
                 role: Role::User,
                 content: "a".into(),
                 timestamp: Utc::now(),
+                model: None,
+                provider: None,
+                estimated_tokens: None,
             },
             Message {
                 role: Role::Assistant,
                 content: "b".into(),
                 timestamp: Utc::now(),
+                model: None,
+                provider: None,
+                estimated_tokens: None,
             },
         ];
         let result = reg.dispatch("/tree fork 0", &mut ctx).unwrap();
@@ -594,11 +606,17 @@ mod tests {
                 role: Role::User,
                 content: "a".into(),
                 timestamp: Utc::now(),
+                model: None,
+                provider: None,
+                estimated_tokens: None,
             },
             Message {
                 role: Role::Assistant,
                 content: "b".into(),
                 timestamp: Utc::now(),
+                model: None,
+                provider: None,
+                estimated_tokens: None,
             },
         ];
         let result = reg.dispatch("/tree revert 0", &mut ctx).unwrap();
@@ -619,6 +637,9 @@ mod tests {
             role: Role::User,
             content: "a".into(),
             timestamp: Utc::now(),
+            model: None,
+            provider: None,
+            estimated_tokens: None,
         }];
         let result = reg.dispatch("/tree fork 5", &mut ctx);
         assert!(result.is_err());

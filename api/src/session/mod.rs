@@ -37,6 +37,15 @@ pub struct Message {
     pub role: Role,
     pub content: String,
     pub timestamp: DateTime<Utc>,
+    /// The model that generated this message (assistant messages only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// The provider that generated this message (assistant messages only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    /// Estimated token count for this message's content.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub estimated_tokens: Option<usize>,
 }
 
 /// A conversation session that maintains context.
@@ -83,6 +92,22 @@ impl Session {
             role: Role::User,
             content: content.to_string(),
             timestamp: Utc::now(),
+            model: None,
+            provider: None,
+            estimated_tokens: None,
+        });
+        self.updated_at = Utc::now();
+    }
+
+    /// Add a user message with an estimated token count.
+    pub fn add_user_message_with_tokens(&mut self, content: &str, estimated_tokens: Option<usize>) {
+        self.messages.push(Message {
+            role: Role::User,
+            content: content.to_string(),
+            timestamp: Utc::now(),
+            model: None,
+            provider: None,
+            estimated_tokens,
         });
         self.updated_at = Utc::now();
     }
@@ -93,6 +118,28 @@ impl Session {
             role: Role::Assistant,
             content: content.to_string(),
             timestamp: Utc::now(),
+            model: None,
+            provider: None,
+            estimated_tokens: None,
+        });
+        self.updated_at = Utc::now();
+    }
+
+    /// Add an assistant message with model/provider metadata and token estimate.
+    pub fn add_assistant_response(
+        &mut self,
+        content: &str,
+        model: Option<String>,
+        provider: Option<String>,
+        estimated_tokens: Option<usize>,
+    ) {
+        self.messages.push(Message {
+            role: Role::Assistant,
+            content: content.to_string(),
+            timestamp: Utc::now(),
+            model,
+            provider,
+            estimated_tokens,
         });
         self.updated_at = Utc::now();
     }
@@ -103,6 +150,9 @@ impl Session {
             role: Role::System,
             content: content.to_string(),
             timestamp: Utc::now(),
+            model: None,
+            provider: None,
+            estimated_tokens: None,
         });
         self.updated_at = Utc::now();
     }
@@ -113,6 +163,22 @@ impl Session {
             role: Role::Tool,
             content: content.to_string(),
             timestamp: Utc::now(),
+            model: None,
+            provider: None,
+            estimated_tokens: None,
+        });
+        self.updated_at = Utc::now();
+    }
+
+    /// Add a tool result message with estimated tokens.
+    pub fn add_tool_message_with_tokens(&mut self, content: &str, estimated_tokens: Option<usize>) {
+        self.messages.push(Message {
+            role: Role::Tool,
+            content: content.to_string(),
+            timestamp: Utc::now(),
+            model: None,
+            provider: None,
+            estimated_tokens,
         });
         self.updated_at = Utc::now();
     }
@@ -205,6 +271,9 @@ impl Session {
                 &[("SUMMARY", summary)],
             ),
             timestamp: Utc::now(),
+            model: None,
+            provider: None,
+            estimated_tokens: None,
         });
 
         self.updated_at = Utc::now();

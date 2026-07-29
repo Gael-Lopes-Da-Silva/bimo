@@ -1,3 +1,4 @@
+use crate::api::facade::estimate_tokens;
 use crate::command::{CommandContext, CommandRegistry, CommandResult};
 use crate::config::{AppConfig, CustomProviderConfig, ProviderPersistedConfig, ThinkingConfig};
 use crate::error::{BimoError, Result};
@@ -282,7 +283,9 @@ impl Agent {
         // Inject todo context before the user message
         self.inject_todo_context();
 
-        self.session.add_user_message(user_message);
+        let estimated_tokens = Some(estimate_tokens(user_message, None));
+        self.session
+            .add_user_message_with_tokens(user_message, estimated_tokens);
 
         let mut total_tool_calls: Vec<ToolCall> = Vec::new();
         let mut total_tool_results: Vec<ToolResult> = Vec::new();
@@ -299,7 +302,13 @@ impl Agent {
 
             if tool_calls.is_empty() || iteration == MAX_TOOL_ITERATIONS {
                 // No tool calls or max iterations reached - return final response
-                self.session.add_assistant_message(&response.content);
+                let estimated_tokens = Some(estimate_tokens(&response.content, Some(&model)));
+                self.session.add_assistant_response(
+                    &response.content,
+                    response.model.clone(),
+                    Some(runtime.id.clone()),
+                    estimated_tokens,
+                );
 
                 tracing::info!(
                     model = ?response.model,
@@ -324,7 +333,13 @@ impl Agent {
             );
 
             // Add the assistant's response (with tool calls) to the session
-            self.session.add_assistant_message(&response.content);
+            let estimated_tokens = Some(estimate_tokens(&response.content, Some(&model)));
+            self.session.add_assistant_response(
+                &response.content,
+                response.model.clone(),
+                Some(runtime.id.clone()),
+                estimated_tokens,
+            );
 
             for call in &tool_calls {
                 tracing::debug!(tool = %call.name, args = ?call.arguments, "executing tool");
