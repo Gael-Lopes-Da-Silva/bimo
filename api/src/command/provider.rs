@@ -1,4 +1,5 @@
 use super::{CommandContext, CommandInfo, CommandResult, SlashCommand, SubcommandInfo};
+use crate::config::CustomProviderConfig;
 use crate::error::{BimoError, Result};
 
 pub(super) struct ProviderCommand;
@@ -28,9 +29,14 @@ impl SlashCommand for ProviderCommand {
                     usage: "/provider select <provider-id>".into(),
                 },
                 SubcommandInfo {
+                    name: "add".into(),
+                    description: "add a custom provider with a base URL".into(),
+                    usage: "/provider add <id> <base-url> [api-key]".into(),
+                },
+                SubcommandInfo {
                     name: "configure".into(),
-                    description: "configure a provider's base URL and API key".into(),
-                    usage: "/provider configure <provider-id>".into(),
+                    description: "set a provider's API key".into(),
+                    usage: "/provider configure <provider-id> [api-key]".into(),
                 },
             ],
             async_command: false,
@@ -47,11 +53,16 @@ impl SlashCommand for ProviderCommand {
                     .zip(ctx.provider_names.iter())
                     .map(|(id, name)| {
                         let sel = if Some(id) == ctx.selected_provider.as_ref() {
-                            " *"
+                            " [selected]"
                         } else {
                             ""
                         };
-                        format!("  {id} — {name}{sel}")
+                        let cfgd = if ctx.configured_providers.contains(id) {
+                            " [configured]"
+                        } else {
+                            ""
+                        };
+                        format!("  {id} — {name}{sel}{cfgd}")
                     })
                     .collect();
                 let output = format!("Available providers:\n{}", lines.join("\n"));
@@ -93,9 +104,37 @@ impl SlashCommand for ProviderCommand {
                     data: None,
                 })
             }
+            Some("add") => {
+                let id = parts.get(1).ok_or_else(|| {
+                    BimoError::Command("usage: /provider add <id> <base-url> [api-key]".into())
+                })?;
+                let base_url = parts.get(2).ok_or_else(|| {
+                    BimoError::Command("usage: /provider add <id> <base-url> [api-key]".into())
+                })?;
+                let api_key = parts.get(3).map(|s| s.to_string());
+                let name = id.to_string();
+                let category = if api_key.is_some() { "cloud" } else { "local" };
+                let cp = CustomProviderConfig {
+                    id: id.to_string(),
+                    name,
+                    category: category.to_string(),
+                    base_url: base_url.to_string(),
+                    api_key_required: api_key.is_some(),
+                    chat_endpoint: "/v1/chat/completions".into(),
+                    models_endpoint: Some("/v1/models".into()),
+                    auth_header: api_key.is_some().then(|| "Authorization".into()),
+                    auth_prefix: api_key.is_some().then(|| "Bearer ".into()),
+                };
+                ctx.provider_add_request = Some(cp);
+                Ok(CommandResult {
+                    command: "provider".into(),
+                    output: format!("Added custom provider '{id}'."),
+                    data: None,
+                })
+            }
             Some("configure") => {
                 let provider_id = parts.get(1).ok_or_else(|| {
-                    BimoError::Command("usage: /provider configure <provider-id>".into())
+                    BimoError::Command("usage: /provider configure <provider-id> <api-key>".into())
                 })?;
                 let exists = ctx.provider_ids.iter().any(|id| id == *provider_id);
                 if !exists {
@@ -103,17 +142,21 @@ impl SlashCommand for ProviderCommand {
                         "provider '{provider_id}' not found."
                     )));
                 }
+                let api_key = parts.get(2).ok_or_else(|| {
+                    BimoError::Command(format!(
+                        "usage: /provider configure {provider_id} <api-key>"
+                    ))
+                })?;
+                ctx.provider_configure_request =
+                    Some((provider_id.to_string(), Some(api_key.to_string()), None));
                 Ok(CommandResult {
                     command: "provider".into(),
-                    output: format!(
-                        "To configure '{provider_id}', use the API endpoint \
-                         POST /api/provider/configure with your settings."
-                    ),
+                    output: format!("Configured '{provider_id}' with API key."),
                     data: None,
                 })
             }
             Some(other) => Err(BimoError::Command(format!(
-                "unknown subcommand '{other}'. Usage: /provider [list|select|configure]"
+                "unknown subcommand '{other}'. Usage: /provider [list|select|add|configure]"
             ))),
         }
     }

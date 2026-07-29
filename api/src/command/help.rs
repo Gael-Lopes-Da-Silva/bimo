@@ -13,7 +13,7 @@ impl SlashCommand for HelpCommand {
     }
 
     fn execute(&self, ctx: &mut CommandContext, _args: &str) -> Result<CommandResult> {
-        let mut output = String::from("Available commands:\n\n");
+        let mut output = String::from("Available commands:\n");
         for (name, desc) in &ctx.command_descriptions {
             output.push_str(&format!("  /{:<16} {}\n", name, desc));
         }

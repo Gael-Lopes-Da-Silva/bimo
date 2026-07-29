@@ -387,6 +387,13 @@ impl Agent {
         all_sessions: &[crate::session::SessionInfo],
     ) -> Result<CommandResult> {
         tracing::info!(input, "execute_command called");
+
+        // Lazy-fetch models if runtime exists but none loaded yet
+        if self.available_models.is_empty() && self.runtime.is_some() {
+            tracing::info!("lazy-fetching models before command");
+            let _ = self.fetch_models().await;
+        }
+
         let mut ctx = self.build_command_context();
         ctx.active_session_id = active_session_id.to_string();
         ctx.all_sessions = all_sessions.to_vec();
@@ -412,6 +419,41 @@ impl Agent {
                         output: "Session context compacted successfully.".into(),
                         data: None,
                     });
+                }
+            }
+            "provider" => {
+                if let Some(cp) = ctx.provider_add_request.take() {
+                    let id = cp.id.clone();
+                    match self.add_custom_provider(cp) {
+                        Ok(()) => {
+                            result.output = format!("Added custom provider '{id}'.");
+                        }
+                        Err(e) => {
+                            result.output = format!("Failed to add custom provider: {e}");
+                        }
+                    }
+                }
+                if let Some((ref pid, ref api_key, ref base_url)) =
+                    ctx.provider_configure_request.take()
+                {
+                    match self.configure_provider(pid, base_url.clone(), api_key.clone()) {
+                        Ok(()) => {
+                            let mut details = String::new();
+                            if api_key.is_some() {
+                                details.push_str(" with API key");
+                            }
+                            if let Some(url) = base_url {
+                                if !details.is_empty() {
+                                    details.push(',');
+                                }
+                                details.push_str(&format!(" base URL: {url}"));
+                            }
+                            result.output = format!("Configured '{pid}'{details}.");
+                        }
+                        Err(e) => {
+                            result.output = format!("Failed to configure '{pid}': {e}");
+                        }
+                    }
                 }
             }
             "tree" => {
@@ -484,6 +526,22 @@ impl Agent {
                 Ok(rt) => {
                     tracing::info!(provider_id = %pid, "runtime resolved after command");
                     self.runtime = Some(rt);
+
+                    // Auto-configure local providers that don't need an API key
+                    if !self.config.provider_configs.contains_key(pid) {
+                        let needs_key = self
+                            .provider_registry
+                            .list_all(&self.config)
+                            .into_iter()
+                            .find(|p| p.id == *pid)
+                            .map(|p| p.requires_api_key)
+                            .unwrap_or(true);
+                        if !needs_key {
+                            tracing::info!(provider_id = %pid, "auto-configuring local provider");
+                            let _ = self.configure_provider(pid, None, None);
+                        }
+                    }
+
                     match self.fetch_models().await {
                         Ok(models) => {
                             if models.is_empty() {
@@ -689,6 +747,7 @@ impl Agent {
             provider_ids: providers.iter().map(|p| p.id.clone()).collect(),
             provider_names: providers.iter().map(|p| p.name.clone()).collect(),
             providers: providers.clone(),
+            configured_providers: self.config.provider_configs.keys().cloned().collect(),
             needs_configuration: self.needs_configuration(),
             tools: self.tool_registry.list().to_vec(),
             command_descriptions,
@@ -702,6 +761,8 @@ impl Agent {
             active_session_id: self.session.id.clone(),
             all_sessions: vec![],
             switch_session_id: None,
+            provider_configure_request: None,
+            provider_add_request: None,
             pending_user_message: None,
             pending_system_message: None,
             loaded_skills: self.loaded_skills.clone(),

@@ -103,6 +103,7 @@ pub struct CommandContext {
     pub provider_ids: Vec<String>,
     pub provider_names: Vec<String>,
     pub providers: Vec<ProviderInfo>,
+    pub configured_providers: Vec<String>,
     pub needs_configuration: bool,
     pub tools: Vec<Tool>,
     pub command_descriptions: Vec<(String, String)>,
@@ -117,6 +118,10 @@ pub struct CommandContext {
     pub active_session_id: String,
     pub all_sessions: Vec<SessionInfo>,
     pub switch_session_id: Option<String>,
+    /// When set, the agent will call configure_provider with these values.
+    pub provider_configure_request: Option<(String, Option<String>, Option<String>)>,
+    /// When set, the agent will call add_custom_provider with this config.
+    pub provider_add_request: Option<crate::config::CustomProviderConfig>,
     /// When set by a command, this message will be added as a user message
     /// to the session after the command completes.
     pub pending_user_message: Option<String>,
