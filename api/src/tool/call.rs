@@ -775,4 +775,141 @@ Done! I've written the file."#;
         let result = apply_todo_action(&action, &mut list);
         assert_eq!(result, "No todos.");
     }
+
+    #[test]
+    fn parse_todo_action_update_description() {
+        let mut args = HashMap::new();
+        args.insert("action".into(), "update_description".into());
+        args.insert("id".into(), "1".into());
+        args.insert("description".into(), "Updated desc".into());
+        let action = parse_todo_action(&args).unwrap();
+        match action {
+            TodoAction::UpdateDescription { id, description } => {
+                assert_eq!(id, 1);
+                assert_eq!(description, "Updated desc");
+            }
+            _ => panic!("expected UpdateDescription action"),
+        }
+    }
+
+    #[test]
+    fn parse_todo_action_unknown_action() {
+        let mut args = HashMap::new();
+        args.insert("action".into(), "fly".into());
+        let result = parse_todo_action(&args);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Unknown todo action"));
+    }
+
+    #[test]
+    fn apply_todo_action_update_description() {
+        let mut list = crate::todo::TodoList::new();
+        list.add("Old task");
+        let action = TodoAction::UpdateDescription {
+            id: 1,
+            description: "New task".into(),
+        };
+        let result = apply_todo_action(&action, &mut list);
+        assert!(result.contains("Updated todo #1"));
+        assert_eq!(list.items()[0].description, "New task");
+    }
+
+    #[test]
+    fn apply_todo_action_update_status_not_found() {
+        let mut list = crate::todo::TodoList::new();
+        list.add("Task");
+        let action = TodoAction::UpdateStatus {
+            id: 99,
+            status: "done".into(),
+        };
+        let result = apply_todo_action(&action, &mut list);
+        assert!(result.contains("not found"));
+    }
+
+    #[test]
+    fn apply_todo_action_remove_not_found() {
+        let mut list = crate::todo::TodoList::new();
+        let action = TodoAction::Remove { id: 42 };
+        let result = apply_todo_action(&action, &mut list);
+        assert!(result.contains("not found"));
+    }
+
+    #[test]
+    fn parse_tool_call_with_content_body() {
+        let input = r#"<write_file path="/tmp/test.txt">Hello, file content!</write_file>"#;
+        let calls = parse_tool_calls(input);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "write_file");
+        assert_eq!(calls[0].arguments.get("path").unwrap(), "/tmp/test.txt");
+        assert_eq!(
+            calls[0].arguments.get("content").unwrap(),
+            "Hello, file content!"
+        );
+    }
+
+    #[test]
+    fn parse_tool_call_with_empty_content_body() {
+        let input = r#"<write_file path="/tmp/test.txt"></write_file>"#;
+        let calls = parse_tool_calls(input);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "write_file");
+        assert_eq!(calls[0].arguments.get("path").unwrap(), "/tmp/test.txt");
+        // Content should not be set when body is empty
+        assert!(
+            calls[0].arguments.get("content").is_none() || calls[0].arguments["content"].is_empty()
+        );
+    }
+
+    #[test]
+    fn execute_manage_todo_add() {
+        let mut args = HashMap::new();
+        args.insert("action".into(), "add".into());
+        args.insert("description".into(), "New task".into());
+        let result = execute_manage_todo(&args);
+        assert!(result.contains("<todo_action>add</todo_action>"));
+        assert!(result.contains("<todo_description>New task</todo_description>"));
+    }
+
+    #[test]
+    fn execute_manage_todo_error() {
+        let mut args = HashMap::new();
+        args.insert("action".into(), "invalid".into());
+        let result = execute_manage_todo(&args);
+        assert!(result.contains("Unknown todo action"));
+    }
+
+    #[test]
+    fn format_tool_result_error_message() {
+        let result = ToolResult {
+            name: "read_file".into(),
+            arguments: HashMap::from([("path".into(), "/nonexistent".into())]),
+            output: "[Error] Failed to read '/nonexistent'".into(),
+            is_error: true,
+        };
+        let msg = format_tool_result_message(&result);
+        assert!(msg.contains("[Error]"));
+        assert!(msg.contains("read_file"));
+    }
+
+    #[test]
+    fn is_common_tag_false_for_tool_names() {
+        assert!(!is_common_tag("read_file"));
+        assert!(!is_common_tag("write_file"));
+        assert!(!is_common_tag("run_command"));
+        assert!(!is_common_tag("search_files"));
+        assert!(!is_common_tag("search_content"));
+        assert!(!is_common_tag("manage_todo"));
+        assert!(!is_common_tag("list_files"));
+    }
+
+    #[test]
+    fn is_common_tag_true_for_html_tags() {
+        assert!(is_common_tag("div"));
+        assert!(is_common_tag("span"));
+        assert!(is_common_tag("p"));
+        assert!(is_common_tag("ul"));
+        assert!(is_common_tag("li"));
+        assert!(is_common_tag("code"));
+        assert!(is_common_tag("pre"));
+    }
 }

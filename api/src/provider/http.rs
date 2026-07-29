@@ -855,4 +855,259 @@ mod tests {
         assert_eq!(models[1].tier.as_deref(), Some("paid"));
         assert!(models[2].tier.is_none());
     }
+
+    #[test]
+    fn parse_models_response_flat_array() {
+        let runtime = make_runtime(RequestBodyFormat::OpenAi);
+        let raw = serde_json::json!([
+            { "id": "gpt-4" },
+            { "id": "gpt-3.5-turbo" }
+        ]);
+        let models = parse_models_response(&runtime, &raw).unwrap();
+        assert_eq!(models.len(), 2);
+        assert_eq!(models[0].id, "gpt-4");
+    }
+
+    #[test]
+    fn parse_models_response_empty() {
+        let runtime = make_runtime(RequestBodyFormat::OpenAi);
+        let raw = serde_json::json!({ "data": [] });
+        let models = parse_models_response(&runtime, &raw).unwrap();
+        assert!(models.is_empty());
+    }
+
+    #[test]
+    fn extract_context_window_from_fields() {
+        let model = serde_json::json!({ "context_length": 128000 });
+        assert_eq!(extract_context_window(&model), Some(128000));
+
+        let model = serde_json::json!({ "max_context": 64000 });
+        assert_eq!(extract_context_window(&model), Some(64000));
+
+        let model = serde_json::json!({ "context_window": 32000 });
+        assert_eq!(extract_context_window(&model), Some(32000));
+
+        let model = serde_json::json!({ "max_context_length": 16000 });
+        assert_eq!(extract_context_window(&model), Some(16000));
+    }
+
+    #[test]
+    fn extract_context_window_missing() {
+        let model = serde_json::json!({ "id": "test" });
+        assert_eq!(extract_context_window(&model), None);
+    }
+
+    #[test]
+    fn extract_context_window_string_number() {
+        let model = serde_json::json!({ "context_length": "128000" });
+        assert_eq!(extract_context_window(&model), Some(128000));
+    }
+
+    #[test]
+    fn infer_tier_partial_pricing() {
+        let model = serde_json::json!({
+            "pricing": { "prompt": "0" }
+        });
+        assert_eq!(infer_tier_from_pricing(&model).as_deref(), Some("free"));
+
+        let model = serde_json::json!({
+            "pricing": { "completion": "0.0001" }
+        });
+        assert_eq!(infer_tier_from_pricing(&model).as_deref(), Some("paid"));
+    }
+
+    #[test]
+    fn infer_tier_pricing_only_prompt_zero() {
+        let model = serde_json::json!({
+            "pricing": { "prompt": "0" }
+        });
+        assert_eq!(infer_tier_from_pricing(&model).as_deref(), Some("free"));
+
+        let model = serde_json::json!({
+            "pricing": { "prompt": "0.00003" }
+        });
+        assert_eq!(infer_tier_from_pricing(&model).as_deref(), Some("paid"));
+    }
+
+    #[test]
+    fn build_anthropic_request_body_with_system() {
+        let runtime = make_runtime(RequestBodyFormat::Anthropic);
+        let messages = vec![
+            ChatMessage {
+                role: "system".into(),
+                content: "You are Claude.".into(),
+            },
+            ChatMessage {
+                role: "user".into(),
+                content: "Hello".into(),
+            },
+        ];
+        let body = build_request_body(&runtime, &messages, "claude-3", &ThinkingConfig::default())
+            .unwrap();
+        assert_eq!(body["system"], "You are Claude.");
+        assert_eq!(body["messages"][0]["role"], "user");
+        assert_eq!(body["messages"][0]["content"], "Hello");
+        assert!(body.get("thinking").is_none());
+    }
+
+    #[test]
+    fn build_ollama_request_body() {
+        let runtime = make_runtime(RequestBodyFormat::Ollama);
+        let messages = vec![ChatMessage {
+            role: "user".into(),
+            content: "hi".into(),
+        }];
+        let body =
+            build_request_body(&runtime, &messages, "llama3", &ThinkingConfig::default()).unwrap();
+        assert_eq!(body["model"], "llama3");
+        assert_eq!(body["messages"][0]["role"], "user");
+        assert_eq!(body["stream"], false);
+    }
+
+    #[test]
+    fn apply_auth_with_header_and_prefix() {
+        let runtime = ProviderRuntime {
+            id: "test".into(),
+            base_url: "".into(),
+            api_key: Some("sk-key".into()),
+            chat_endpoint: "".into(),
+            models_endpoint: None,
+            auth_header: Some("Authorization".into()),
+            auth_prefix: Some("Bearer ".into()),
+            request_body_format: RequestBodyFormat::OpenAi,
+        };
+        let client = reqwest::Client::new();
+        let req = client.get("https://example.com");
+        let _req = apply_auth(req, &runtime).unwrap();
+    }
+
+    #[test]
+    fn apply_auth_without_api_key() {
+        let runtime = ProviderRuntime {
+            id: "test".into(),
+            base_url: "".into(),
+            api_key: None,
+            chat_endpoint: "".into(),
+            models_endpoint: None,
+            auth_header: Some("x-api-key".into()),
+            auth_prefix: None,
+            request_body_format: RequestBodyFormat::Anthropic,
+        };
+        let client = reqwest::Client::new();
+        let req = client.get("https://example.com");
+        let _req = apply_auth(req, &runtime).unwrap();
+        // Should not panic when no key is set
+    }
+
+    #[test]
+    fn parse_openai_chat_response_without_usage() {
+        let runtime = make_runtime(RequestBodyFormat::OpenAi);
+        let raw = serde_json::json!({
+            "choices": [{
+                "message": { "content": "No usage data" }
+            }],
+            "model": "gpt-4"
+        });
+        let resp = parse_chat_response(&runtime, &raw).unwrap();
+        assert_eq!(resp.content, "No usage data");
+        assert!(resp.usage.is_none());
+    }
+
+    #[test]
+    fn parse_openai_chat_response_without_model() {
+        let runtime = make_runtime(RequestBodyFormat::OpenAi);
+        let raw = serde_json::json!({
+            "choices": [{
+                "message": { "content": "Hello" }
+            }]
+        });
+        let resp = parse_chat_response(&runtime, &raw).unwrap();
+        assert_eq!(resp.content, "Hello");
+        assert!(resp.model.is_none());
+    }
+
+    #[test]
+    fn parse_ollama_chat_response_no_usage() {
+        let runtime = make_runtime(RequestBodyFormat::Ollama);
+        let raw = serde_json::json!({
+            "message": { "content": "Hi from Ollama" }
+        });
+        let resp = parse_chat_response(&runtime, &raw).unwrap();
+        assert_eq!(resp.content, "Hi from Ollama");
+        assert!(resp.usage.is_none());
+        assert!(resp.model.is_none());
+    }
+
+    #[test]
+    fn extract_stream_delta_openai() {
+        let chunk = serde_json::json!({
+            "choices": [{ "delta": { "content": "Hello" } }]
+        });
+        assert_eq!(
+            extract_stream_delta(&chunk, &RequestBodyFormat::OpenAi),
+            Some("Hello".into())
+        );
+    }
+
+    #[test]
+    fn extract_stream_delta_openai_empty() {
+        let chunk = serde_json::json!({
+            "choices": [{ "delta": {} }]
+        });
+        assert_eq!(
+            extract_stream_delta(&chunk, &RequestBodyFormat::OpenAi),
+            None
+        );
+    }
+
+    #[test]
+    fn extract_stream_delta_anthropic() {
+        let chunk = serde_json::json!({
+            "type": "content_block_delta",
+            "delta": { "text": "World" }
+        });
+        assert_eq!(
+            extract_stream_delta(&chunk, &RequestBodyFormat::Anthropic),
+            Some("World".into())
+        );
+    }
+
+    #[test]
+    fn extract_stream_delta_anthropic_wrong_type() {
+        let chunk = serde_json::json!({
+            "type": "message_start",
+            "message": { "id": "msg1" }
+        });
+        assert_eq!(
+            extract_stream_delta(&chunk, &RequestBodyFormat::Anthropic),
+            None
+        );
+    }
+
+    #[test]
+    fn extract_stream_delta_ollama() {
+        let chunk = serde_json::json!({
+            "message": { "content": "Ollama chunk" }
+        });
+        assert_eq!(
+            extract_stream_delta(&chunk, &RequestBodyFormat::Ollama),
+            Some("Ollama chunk".into())
+        );
+    }
+
+    #[test]
+    fn build_openai_request_body_respects_reasoning_effort() {
+        let runtime = make_runtime(RequestBodyFormat::OpenAi);
+        let messages = vec![ChatMessage {
+            role: "user".into(),
+            content: "hi".into(),
+        }];
+        let thinking = ThinkingConfig {
+            enabled: true,
+            reasoning_effort: Some("medium".into()),
+            budget_tokens: None,
+        };
+        let body = build_request_body(&runtime, &messages, "o3-mini", &thinking).unwrap();
+        assert_eq!(body["reasoning_effort"], "medium");
+    }
 }

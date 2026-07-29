@@ -109,3 +109,70 @@ impl Session {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn create_test_session(prefix: &str) -> Session {
+        let mut s = Session::new();
+        s.add_user_message(&format!("{prefix} message"));
+        s.save().unwrap();
+        s
+    }
+
+    #[test]
+    fn save_and_load_session() {
+        let mut s = Session::new();
+        s.add_user_message("save test");
+        s.save().unwrap();
+        let loaded = Session::load(&s.id).unwrap();
+        assert_eq!(loaded.id, s.id);
+        assert_eq!(loaded.message_count(), 1);
+        assert_eq!(loaded.messages[0].content, "save test");
+        Session::delete_saved(&s.id).unwrap();
+    }
+
+    #[test]
+    fn list_saved_returns_all_saved_sessions() {
+        let s1 = create_test_session("first");
+        let s2 = create_test_session("second");
+        let list = Session::list_saved().unwrap();
+        assert!(list.len() >= 2);
+        assert!(list.iter().any(|info| info.id == s1.id));
+        assert!(list.iter().any(|info| info.id == s2.id));
+        Session::delete_saved(&s1.id).unwrap();
+        Session::delete_saved(&s2.id).unwrap();
+    }
+
+    #[test]
+    fn list_saved_returns_newest_first() {
+        let s1 = create_test_session("older");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        let s2 = create_test_session("newer");
+        let list = Session::list_saved().unwrap();
+        let idx1 = list.iter().position(|i| i.id == s1.id).unwrap();
+        let idx2 = list.iter().position(|i| i.id == s2.id).unwrap();
+        assert!(idx2 < idx1, "newer session should appear first");
+        Session::delete_saved(&s1.id).unwrap();
+        Session::delete_saved(&s2.id).unwrap();
+    }
+
+    #[test]
+    fn delete_all_saved_purges_sessions() {
+        let s1 = create_test_session("purge1");
+        let s2 = create_test_session("purge2");
+        Session::delete_all_saved().unwrap();
+        assert!(Session::load(&s1.id).is_err());
+        assert!(Session::load(&s2.id).is_err());
+    }
+
+    #[test]
+    fn save_and_load_empty_session() {
+        let s = Session::new();
+        s.save().unwrap();
+        let loaded = Session::load(&s.id).unwrap();
+        assert_eq!(loaded.message_count(), 0);
+        Session::delete_saved(&s.id).unwrap();
+    }
+}

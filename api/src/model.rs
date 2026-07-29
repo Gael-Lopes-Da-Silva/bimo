@@ -154,3 +154,125 @@ pub fn lookup_known_context_window(model_id: &str) -> Option<u32> {
     // ── Unknown model — no static data ──────────────────────────────
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lookup_claude_models() {
+        assert_eq!(
+            lookup_known_context_window("claude-sonnet-4-20250514"),
+            Some(200_000)
+        );
+        assert_eq!(lookup_known_context_window("claude-3-opus"), Some(200_000));
+        assert_eq!(
+            lookup_known_context_window("claude-3-haiku-20240307"),
+            Some(200_000)
+        );
+        assert_eq!(lookup_known_context_window("claude-2"), Some(100_000));
+        assert_eq!(
+            lookup_known_context_window("claude-instant-1"),
+            Some(100_000)
+        );
+    }
+
+    #[test]
+    fn lookup_openai_o_series() {
+        assert_eq!(lookup_known_context_window("o1"), Some(200_000));
+        assert_eq!(lookup_known_context_window("o3-mini"), Some(200_000));
+        assert_eq!(lookup_known_context_window("o4-mini"), Some(200_000));
+    }
+
+    #[test]
+    fn lookup_gpt4_series() {
+        assert_eq!(lookup_known_context_window("gpt-4.1-nano"), Some(1_000_000));
+        assert_eq!(
+            lookup_known_context_window("gpt-4.5-preview"),
+            Some(128_000)
+        );
+        assert_eq!(lookup_known_context_window("gpt-4o"), Some(128_000));
+        assert_eq!(lookup_known_context_window("gpt-4-turbo"), Some(128_000));
+        assert_eq!(lookup_known_context_window("gpt-4"), Some(8_192));
+    }
+
+    #[test]
+    fn lookup_gpt35() {
+        assert_eq!(lookup_known_context_window("gpt-3.5-turbo"), Some(16_385));
+    }
+
+    #[test]
+    fn lookup_gemini() {
+        assert_eq!(
+            lookup_known_context_window("gemini-1.5-pro"),
+            Some(2_000_000)
+        );
+        assert_eq!(
+            lookup_known_context_window("gemini-1.5-flash"),
+            Some(1_000_000)
+        );
+        assert_eq!(
+            lookup_known_context_window("gemini-2.5-pro"),
+            Some(1_000_000)
+        );
+    }
+
+    #[test]
+    fn lookup_llama() {
+        assert_eq!(lookup_known_context_window("llama2"), Some(4_096));
+        assert_eq!(lookup_known_context_window("llama-2"), Some(4_096));
+        assert_eq!(lookup_known_context_window("llama3"), Some(8_192));
+        assert_eq!(lookup_known_context_window("llama-3"), Some(8_192));
+        assert_eq!(lookup_known_context_window("llama3.1"), Some(128_000));
+        assert_eq!(lookup_known_context_window("llama3.2"), Some(128_000));
+        assert_eq!(lookup_known_context_window("llama-3.3"), Some(128_000));
+        assert_eq!(
+            lookup_known_context_window("unknown-llama-variant"),
+            Some(128_000)
+        );
+    }
+
+    #[test]
+    fn lookup_deepseek() {
+        assert_eq!(lookup_known_context_window("deepseek-chat"), Some(128_000));
+        assert_eq!(lookup_known_context_window("deepseek-coder"), Some(128_000));
+    }
+
+    #[test]
+    fn lookup_mistral_family() {
+        assert_eq!(lookup_known_context_window("mistral-large"), Some(128_000));
+        assert_eq!(lookup_known_context_window("mixtral-8x7b"), Some(128_000));
+        assert_eq!(lookup_known_context_window("codestral"), Some(256_000));
+    }
+
+    #[test]
+    fn lookup_qwen() {
+        assert_eq!(lookup_known_context_window("qwen2.5"), Some(128_000));
+        assert_eq!(lookup_known_context_window("qwen-2.5"), Some(128_000));
+        assert_eq!(lookup_known_context_window("qwen3"), Some(128_000));
+        assert_eq!(lookup_known_context_window("qwen-3"), Some(128_000));
+        assert_eq!(lookup_known_context_window("qwen2"), Some(32_768));
+    }
+
+    #[test]
+    fn lookup_command_r() {
+        assert_eq!(lookup_known_context_window("command-r"), Some(128_000));
+        assert_eq!(lookup_known_context_window("command-r-plus"), Some(128_000));
+    }
+
+    #[test]
+    fn lookup_unknown_model() {
+        assert_eq!(lookup_known_context_window("totally-unknown-model"), None);
+        assert_eq!(lookup_known_context_window(""), None);
+    }
+
+    #[test]
+    fn lookup_case_insensitive() {
+        assert_eq!(lookup_known_context_window("GPT-4o"), Some(128_000));
+        assert_eq!(
+            lookup_known_context_window("Claude-3-Sonnet"),
+            Some(200_000)
+        );
+        assert_eq!(lookup_known_context_window("LLAMA3.1"), Some(128_000));
+    }
+}

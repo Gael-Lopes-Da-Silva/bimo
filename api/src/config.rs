@@ -200,6 +200,36 @@ mod tests {
     }
 
     #[test]
+    fn thinking_config_defaults() {
+        let thinking = ThinkingConfig::default();
+        assert!(!thinking.enabled);
+        assert!(thinking.budget_tokens.is_none());
+        assert!(thinking.reasoning_effort.is_none());
+    }
+
+    #[test]
+    fn thinking_config_serialization() {
+        let thinking = ThinkingConfig {
+            enabled: true,
+            budget_tokens: Some(5000),
+            reasoning_effort: Some("high".into()),
+        };
+        let json = serde_json::to_string(&thinking).unwrap();
+        let deserialized: ThinkingConfig = serde_json::from_str(&json).unwrap();
+        assert!(deserialized.enabled);
+        assert_eq!(deserialized.budget_tokens, Some(5000));
+        assert_eq!(deserialized.reasoning_effort.as_deref(), Some("high"));
+    }
+
+    #[test]
+    fn thinking_config_omits_defaults() {
+        let thinking = ThinkingConfig::default();
+        let json = serde_json::to_string(&thinking).unwrap();
+        assert!(!json.contains("budget_tokens"));
+        assert!(!json.contains("reasoning_effort"));
+    }
+
+    #[test]
     fn api_key_can_be_none() {
         let cfg = AppConfig {
             provider_configs: {

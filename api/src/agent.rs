@@ -759,3 +759,137 @@ fn load_agent_instructions(cwd: &str) -> (Vec<String>, Vec<String>) {
 
     (filenames, chunks)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::session::Role;
+
+    #[test]
+    fn new_agent_has_no_provider() {
+        let agent = Agent::new();
+        assert!(agent.runtime.is_none());
+        assert!(agent.needs_configuration());
+        assert_eq!(agent.list_models().len(), 0);
+    }
+
+    #[test]
+    fn new_agent_has_system_message() {
+        let agent = Agent::new();
+        assert_eq!(agent.session.message_count(), 1);
+        assert_eq!(agent.session.messages[0].role, Role::System);
+    }
+
+    #[test]
+    fn new_agent_has_builtin_providers() {
+        let agent = Agent::new();
+        let providers = agent.list_providers();
+        assert!(!providers.is_empty());
+        assert!(providers.iter().any(|p| p.id == "openai"));
+        assert!(providers.iter().any(|p| p.id == "ollama"));
+    }
+
+    #[test]
+    fn add_custom_provider_duplicate_errors() {
+        let mut agent = Agent::new();
+        let cp = CustomProviderConfig {
+            id: "openai".into(),
+            name: "My OpenAI".into(),
+            category: "cloud".into(),
+            base_url: "https://my.openai.com".into(),
+            api_key_required: true,
+            chat_endpoint: "/chat".into(),
+            models_endpoint: None,
+            auth_header: None,
+            auth_prefix: None,
+        };
+        let result = agent.add_custom_provider(cp);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("already exists"));
+    }
+
+    #[test]
+    fn add_custom_provider_succeeds() {
+        let mut agent = Agent::new();
+        let cp = CustomProviderConfig {
+            id: "my-test-provider".into(),
+            name: "Test Provider".into(),
+            category: "cloud".into(),
+            base_url: "https://test.api.com".into(),
+            api_key_required: false,
+            chat_endpoint: "/v1/chat".into(),
+            models_endpoint: Some("/v1/models".into()),
+            auth_header: Some("Authorization".into()),
+            auth_prefix: Some("Bearer ".into()),
+        };
+        let result = agent.add_custom_provider(cp);
+        assert!(result.is_ok());
+        let providers = agent.list_providers();
+        assert!(providers.iter().any(|p| p.id == "my-test-provider"));
+        // Cleanup config change
+        agent.config.custom_providers.clear();
+    }
+
+    #[test]
+    fn select_model_without_provider_succeeds() {
+        let mut agent = Agent::new();
+        assert!(agent.runtime.is_none());
+        let result = agent.select_model("test-model");
+        assert!(result.is_ok());
+        assert_eq!(agent.config.selected_model.as_deref(), Some("test-model"));
+        // Reset
+        agent.config.selected_model = None;
+    }
+
+    #[test]
+    fn select_model_unknown_when_models_populated_errors() {
+        let mut agent = Agent::new();
+        agent.available_models = vec![ModelInfo {
+            id: "gpt-4".into(),
+            name: "GPT-4".into(),
+            provider_id: "openai".into(),
+            tier: None,
+            context_window: None,
+        }];
+        let result = agent.select_model("nonexistent-model");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not found"));
+    }
+
+    #[test]
+    fn clear_session_removes_messages() {
+        let mut agent = Agent::new();
+        assert_eq!(agent.session.message_count(), 1);
+        agent.session.add_user_message("hello");
+        assert_eq!(agent.session.message_count(), 2);
+        agent.clear_session();
+        assert_eq!(agent.session.message_count(), 0);
+    }
+
+    #[test]
+    fn needs_configuration_when_no_provider() {
+        let agent = Agent::new();
+        assert!(agent.needs_configuration());
+    }
+
+    #[test]
+    fn configure_provider_adds_config() {
+        let mut agent = Agent::new();
+        let result = agent.configure_provider("openai", None, Some("sk-test-key".into()));
+        assert!(result.is_ok());
+        let config = agent.config.provider_configs.get("openai").unwrap();
+        assert_eq!(config.api_key.as_deref(), Some("sk-test-key"));
+        // Cleanup
+        agent.config.provider_configs.remove("openai");
+    }
+
+    #[test]
+    fn save_session_persists_to_disk() {
+        let mut agent = Agent::new();
+        let id = agent.session.id.clone();
+        agent.save_session().unwrap();
+        let loaded = Session::load(&id).unwrap();
+        assert_eq!(loaded.id, id);
+        Session::delete_saved(&id).unwrap();
+    }
+}
