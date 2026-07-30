@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
-use aisdk::core::DynamicModel;
+use aisdk::core::{DynamicModel, LanguageModelStreamChunkType};
 use aisdk::providers::OpenAICompatible;
+use futures::StreamExt;
 use tokio::sync::broadcast;
 use tracing::info;
 
@@ -9,6 +10,8 @@ use crate::config::LocalProvider;
 use crate::error::Result;
 use crate::models::ModelRegistry;
 use crate::session::Session;
+
+type ModelProvider = OpenAICompatible<DynamicModel>;
 
 #[derive(Debug, Clone)]
 pub enum AgentEvent {
@@ -51,6 +54,8 @@ impl Agent {
         super::AgentBuilder::new()
     }
 
+    /// Run the agent as a oneshot (non-streaming). The response is not forwarded
+    /// as text deltas — use `run_stream` for real-time deltas.
     pub async fn run(&mut self) -> Result<broadcast::Receiver<AgentEvent>> {
         let runner = self
             .runner
@@ -80,6 +85,30 @@ impl Agent {
         Ok(rx)
     }
 
+    /// Run the agent with streaming. Each text/reasoning delta is forwarded
+    /// as an `AgentEvent::TextDelta` / `AgentEvent::ReasoningDelta` in real time.
+    pub async fn run_stream(&mut self) -> Result<broadcast::Receiver<AgentEvent>> {
+        let runner = self
+            .runner
+            .take()
+            .ok_or_else(|| crate::error::BimoError::Agent("Agent already consumed".to_string()))?;
+
+        let (tx, rx) = broadcast::channel(256);
+
+        let todos: crate::tools::SharedTodoList = crate::tools::new_shared_todolist();
+        crate::tools::init_todo_list(todos.clone());
+
+        let session_id = self.session.id.clone();
+
+        tokio::spawn(async move {
+            info!("Starting agent stream session: {}", session_id);
+            runner.execute_stream(tx).await;
+        });
+
+        Ok(rx)
+    }
+
+    /// Oneshot helper that collects all text into a single string.
     pub async fn run_text(&mut self) -> Result<String> {
         let mut rx = self.run().await?;
         let mut output = String::new();
@@ -111,34 +140,9 @@ impl Agent {
 }
 
 impl AgentRunner {
-    async fn execute(self) -> std::result::Result<(), String> {
-        let tools = crate::tools::all_tools();
-
-        // Resolve base URL: explicit config → local provider → registry lookup
-        let base_url = if let Some(url) = &self.provider_base_url {
-            url.clone()
-        } else if let Some(local) = self
-            .local_providers
-            .iter()
-            .find(|p| p.name.to_lowercase() == self.provider_name.to_lowercase())
-        {
-            local.base_url.clone()
-        } else if let Some(registry) = &self.registry {
-            registry
-                .provider_base_url(&self.provider_name)
-                .await
-                .ok_or_else(|| {
-                    format!(
-                        "Unknown provider '{}' — not found in registry or local config",
-                        self.provider_name
-                    )
-                })?
-        } else {
-            return Err(format!(
-                "Unknown provider '{}' — no base_url configured and no registry available",
-                self.provider_name
-            ));
-        };
+    /// Build the provider model from the runner configuration.
+    async fn build_model(&self) -> std::result::Result<ModelProvider, String> {
+        let base_url = self.resolve_base_url().await?;
 
         let mut builder_cfg = OpenAICompatible::<DynamicModel>::builder()
             .base_url(base_url)
@@ -148,11 +152,48 @@ impl AgentRunner {
             builder_cfg = builder_cfg.api_key(key.clone());
         }
 
-        let model = builder_cfg
+        builder_cfg
             .build()
-            .map_err(|e| format!("Failed to build provider: {e}"))?;
+            .map_err(|e| format!("Failed to build provider: {e}"))
+    }
 
-        let mut req_builder = aisdk::core::LanguageModelRequest::builder()
+    async fn resolve_base_url(&self) -> std::result::Result<String, String> {
+        if let Some(url) = &self.provider_base_url {
+            return Ok(url.clone());
+        }
+
+        if let Some(local) = self
+            .local_providers
+            .iter()
+            .find(|p| p.name.to_lowercase() == self.provider_name.to_lowercase())
+        {
+            return Ok(local.base_url.clone());
+        }
+
+        if let Some(registry) = &self.registry {
+            return registry
+                .provider_base_url(&self.provider_name)
+                .await
+                .ok_or_else(|| {
+                    format!(
+                        "Unknown provider '{}' — not found in registry or local config",
+                        self.provider_name
+                    )
+                });
+        }
+
+        Err(format!(
+            "Unknown provider '{}' — no base_url configured and no registry available",
+            self.provider_name
+        ))
+    }
+
+    /// Oneshot execution — consumes self, runs to completion, returns Ok/Err.
+    async fn execute(self) -> std::result::Result<(), String> {
+        let tools = crate::tools::all_tools();
+        let model = self.build_model().await?;
+
+        let mut req_builder = aisdk::core::LanguageModelRequest::<ModelProvider>::builder()
             .model(model)
             .system(&self.system_prompt)
             .prompt(&self.user_prompt);
@@ -168,5 +209,69 @@ impl AgentRunner {
         request.generate_text().await.map_err(|e| e.to_string())?;
 
         Ok(())
+    }
+
+    /// Streaming execution — forwards real-time deltas through the broadcast channel.
+    async fn execute_stream(self, tx: broadcast::Sender<AgentEvent>) {
+        let tools = crate::tools::all_tools();
+
+        let model = match self.build_model().await {
+            Ok(m) => m,
+            Err(e) => {
+                let _ = tx.send(AgentEvent::Error(e));
+                let _ = tx.send(AgentEvent::Done);
+                return;
+            }
+        };
+
+        let mut req_builder = aisdk::core::LanguageModelRequest::<ModelProvider>::builder()
+            .model(model)
+            .system(&self.system_prompt)
+            .prompt(&self.user_prompt);
+
+        for tool in tools {
+            req_builder = req_builder.with_tool(tool);
+        }
+
+        let mut request = req_builder
+            .stop_when(aisdk::core::utils::step_count_is(self.max_steps))
+            .build();
+
+        match request.stream_text().await {
+            Ok(response) => {
+                let mut stream = response.stream;
+                while let Some(chunk) = stream.next().await {
+                    match chunk {
+                        LanguageModelStreamChunkType::Text(text) => {
+                            let _ = tx.send(AgentEvent::TextDelta(text));
+                        }
+                        LanguageModelStreamChunkType::Reasoning(text) => {
+                            let _ = tx.send(AgentEvent::ReasoningDelta(text));
+                        }
+                        LanguageModelStreamChunkType::End(_) => {
+                            let _ = tx.send(AgentEvent::Done);
+                            return;
+                        }
+                        LanguageModelStreamChunkType::Failed(err) => {
+                            let _ = tx.send(AgentEvent::Error(err));
+                            let _ = tx.send(AgentEvent::Done);
+                            return;
+                        }
+                        LanguageModelStreamChunkType::Incomplete(msg) => {
+                            let _ = tx.send(AgentEvent::TextDelta(msg));
+                            let _ = tx.send(AgentEvent::Done);
+                            return;
+                        }
+                        _ => {}
+                    }
+                }
+                // Stream ended without a terminal event (shouldn't normally happen)
+                let _ = tx.send(AgentEvent::Done);
+            }
+            Err(e) => {
+                let _ = tx.send(AgentEvent::Error(e.to_string()));
+                let _ = tx.send(AgentEvent::Done);
+            }
+        }
     }
 }

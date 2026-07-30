@@ -95,6 +95,7 @@ dependencies = [
  "aisdk",
  "chrono",
  "dirs",
+ "futures",
  "glob",
  "reqwest",
  "schemars 0.8.22",
