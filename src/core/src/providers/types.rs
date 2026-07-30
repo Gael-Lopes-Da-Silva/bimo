@@ -46,7 +46,7 @@ impl ProviderEntry {
             Some("@ai-sdk/openai") => ApiFormat::OpenAI,
             Some("@ai-sdk/google") | Some("@ai-sdk/google-vertex") => ApiFormat::Google,
             Some(other) => ApiFormat::Other(other.to_string()),
-            None => ApiFormat::OpenAICompatible,
+            None => ApiFormat::Other("unknown".to_string()),
         }
     }
 

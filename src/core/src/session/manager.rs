@@ -84,7 +84,7 @@ impl SessionManager {
         let interval_minutes = self.settings.cleanup_interval_minutes;
 
         let handle = tokio::spawn(async move {
-            let mut ticker = interval(Duration::from_secs(interval_minutes * 60));
+            let mut ticker = interval(Duration::from_secs(interval_minutes.saturating_mul(60)));
             loop {
                 ticker.tick().await;
                 Self::run_cleanup(&sessions, ttl, max_sessions).await;
@@ -129,12 +129,16 @@ impl SessionManager {
         {
             let mut map = sessions.write().await;
             if map.len() > max_sessions {
-                let mut sessions_sorted: Vec<(String, Session)> = map.drain().collect();
+                let mut sessions_sorted: Vec<(String, Session)> =
+                    map.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
                 sessions_sorted.sort_by_key(|(_, s)| Reverse(s.updated_at));
 
                 to_remove_excess = sessions_sorted.split_off(max_sessions);
 
-                for (id, session) in sessions_sorted {
+                // Clear and reinsert only the kept sessions to avoid draining the hashmap entirely
+                let kept: Vec<(String, Session)> = sessions_sorted;
+                map.clear();
+                for (id, session) in kept {
                     map.insert(id, session);
                 }
             } else {

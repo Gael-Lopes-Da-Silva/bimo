@@ -86,14 +86,23 @@ fn wait_with_timeout(
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
-                let output = child
-                    .wait_with_output()
-                    .unwrap_or_else(|_| std::process::Output {
-                        status,
-                        stdout: Vec::new(),
-                        stderr: Vec::new(),
-                    });
-                return Ok(output);
+                let stdout = child.stdout.take().map_or_else(Vec::new, |mut out| {
+                    let mut buf = Vec::new();
+                    use std::io::Read;
+                    out.read_to_end(&mut buf).unwrap_or_default();
+                    buf
+                });
+                let stderr = child.stderr.take().map_or_else(Vec::new, |mut out| {
+                    let mut buf = Vec::new();
+                    use std::io::Read;
+                    out.read_to_end(&mut buf).unwrap_or_default();
+                    buf
+                });
+                return Ok(std::process::Output {
+                    status,
+                    stdout,
+                    stderr,
+                });
             }
             Ok(None) => {
                 if start.elapsed() >= timeout {

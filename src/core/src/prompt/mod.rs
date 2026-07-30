@@ -10,7 +10,12 @@ const COMPACT_PROMPT: &str = include_str!("prompts/COMPACT.md");
 /// Unknown placeholders are left as-is.
 pub fn render_template(template: &str, vars: &HashMap<String, String>) -> String {
     let mut result = template.to_string();
-    for (key, value) in vars {
+    let mut keys: Vec<&String> = vars.keys().collect();
+    // Sort by key length descending so longer placeholders are replaced first,
+    // preventing partial replacements.
+    keys.sort_by(|a, b| b.len().cmp(&a.len()).then(a.cmp(b)));
+    for key in keys {
+        let value = vars.get(key).unwrap();
         let placeholder = format!("{{{{{key}}}}}");
         result = result.replace(&placeholder, value);
     }

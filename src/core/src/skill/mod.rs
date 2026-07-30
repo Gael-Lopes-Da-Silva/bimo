@@ -113,14 +113,33 @@ pub fn load_skills(base_dirs: &[PathBuf]) -> Vec<Skill> {
 ///
 /// Returns `(frontmatter_yaml, body)` or `None` when no frontmatter is present.
 fn parse_frontmatter(content: &str) -> Option<(String, String)> {
-    let trimmed = content.trim();
+    let trimmed = content.trim_start();
     if !trimmed.starts_with("---") {
         return None;
     }
-    let after_first = &trimmed[3..];
-    let end = after_first.find("\n---")?;
-    let frontmatter = after_first[..end].trim().to_string();
-    let body = after_first[end + 4..].trim().to_string();
+    let after_first = trimmed.strip_prefix("---")?;
+    let rest = after_first.trim_start();
+    // Find the closing delimiter on its own line
+    let mut search_start = 0;
+    let mut end_pos = None;
+    while let Some(pos) = rest[search_start..].find("\n---") {
+        let absolute_pos = search_start + pos;
+        // Check that the closing delimiter is followed by newline or end of string
+        let after_delim = absolute_pos + 4; // skip \n---
+        if after_delim == rest.len() || rest[after_delim..].starts_with('\n') {
+            end_pos = Some(absolute_pos);
+            break;
+        }
+        search_start = absolute_pos + 1;
+    }
+    let end = end_pos?;
+    let frontmatter = rest[..end].trim().to_string();
+    let body_start = end + 4; // skip \n---
+    let body = if body_start < rest.len() {
+        rest[body_start..].trim_start().to_string()
+    } else {
+        String::new()
+    };
     Some((frontmatter, body))
 }
 
