@@ -18,6 +18,11 @@ pub fn edit_file(
     replace_all: Option<bool>,
 ) -> Tool {
     info!("Editing file: {}", file_path);
+
+    if old_string.is_empty() {
+        return Err("old_string cannot be empty".to_string());
+    }
+
     let content = fs::read_to_string(&file_path)
         .map_err(|e| format!("Failed to read {}: {}", file_path, e))?;
 

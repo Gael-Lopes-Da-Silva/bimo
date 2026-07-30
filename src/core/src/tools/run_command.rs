@@ -16,10 +16,20 @@ pub fn run_command(command: String, workdir: Option<String>, timeout_secs: Optio
     info!("Running command: {}", command);
     let timeout = Duration::from_secs(timeout_secs.unwrap_or(120));
 
+    let cwd = if let Some(ref dir) = workdir {
+        if std::path::Path::new(dir).exists() && std::path::Path::new(dir).is_dir() {
+            dir.as_str()
+        } else {
+            return Err(format!("Invalid working directory: {}", dir));
+        }
+    } else {
+        "."
+    };
+
     let child = Command::new("sh")
         .arg("-c")
         .arg(&command)
-        .current_dir(workdir.as_deref().unwrap_or("."))
+        .current_dir(cwd)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()

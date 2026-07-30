@@ -40,16 +40,27 @@ impl SessionManager {
             return Ok(());
         }
 
+        let max_load = self.settings.max_sessions;
         let mut reader = tokio::fs::read_dir(&dir).await?;
         let mut sessions = self.sessions.write().await;
+        let mut loaded = 0;
 
         while let Some(entry) = reader.next_entry().await? {
+            if loaded >= max_load {
+                warn!(
+                    "Reached maximum session limit ({}), stopping load",
+                    max_load
+                );
+                break;
+            }
+
             let path = entry.path();
             if path.extension().is_some_and(|e| e == "json") {
                 match tokio::fs::read_to_string(&path).await {
                     Ok(content) => match serde_json::from_str::<Session>(&content) {
                         Ok(session) => {
                             sessions.insert(session.id.clone(), session);
+                            loaded += 1;
                         }
                         Err(e) => {
                             warn!("Failed to parse session file {:?}: {}", path, e);
@@ -89,16 +100,24 @@ impl SessionManager {
         ttl_hours: u64,
         max_sessions: usize,
     ) {
-        let mut map = sessions.write().await;
+        let expired_ids: Vec<String>;
+        let to_remove_excess: Vec<(String, Session)>;
 
-        let expired_ids: Vec<String> = map
-            .iter()
-            .filter(|(_, s)| s.is_expired(ttl_hours))
-            .map(|(id, _)| id.clone())
-            .collect();
+        {
+            let map = sessions.read().await;
+            expired_ids = map
+                .iter()
+                .filter(|(_, s)| s.is_expired(ttl_hours))
+                .map(|(id, _)| id.clone())
+                .collect();
+        }
 
         for id in &expired_ids {
-            if let Some(session) = map.remove(id) {
+            let session = {
+                let mut map = sessions.write().await;
+                map.remove(id)
+            };
+            if let Some(session) = session {
                 if let Err(e) = session.delete() {
                     warn!("Failed to delete session {}: {}", id, e);
                 } else {
@@ -107,36 +126,41 @@ impl SessionManager {
             }
         }
 
-        if map.len() > max_sessions {
-            let mut sessions_sorted: Vec<(String, Session)> = map.drain().collect();
-            sessions_sorted.sort_by_key(|(_, s)| Reverse(s.updated_at));
+        {
+            let mut map = sessions.write().await;
+            if map.len() > max_sessions {
+                let mut sessions_sorted: Vec<(String, Session)> = map.drain().collect();
+                sessions_sorted.sort_by_key(|(_, s)| Reverse(s.updated_at));
 
-            let to_remove = sessions_sorted.split_off(max_sessions);
-            for (id, session) in to_remove {
-                if let Err(e) = session.delete() {
-                    warn!("Failed to delete session {}: {}", id, e);
+                to_remove_excess = sessions_sorted.split_off(max_sessions);
+
+                for (id, session) in sessions_sorted {
+                    map.insert(id, session);
                 }
-                info!("Removed excess session {}", id);
+            } else {
+                to_remove_excess = Vec::new();
             }
+        }
 
-            for (id, session) in sessions_sorted {
-                map.insert(id, session);
+        for (id, session) in to_remove_excess {
+            if let Err(e) = session.delete() {
+                warn!("Failed to delete session {}: {}", id, e);
             }
+            info!("Removed excess session {}", id);
         }
     }
 
     /// Creates a new session, persists it, and returns it.
-    pub async fn create(&self) -> Session {
+    /// Returns an error if the session cannot be saved.
+    pub async fn create(&self) -> crate::Result<Session> {
         let session = Session::new();
         let mut map = self.sessions.write().await;
         let id = session.id.clone();
         map.insert(id.clone(), session.clone());
 
-        if let Err(e) = session.save() {
-            warn!("Failed to save new session {}: {}", id, e);
-        }
+        session.save()?;
 
-        session
+        Ok(session)
     }
 
     /// Retrieves a session by id.

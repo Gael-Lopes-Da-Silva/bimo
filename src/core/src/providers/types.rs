@@ -51,10 +51,13 @@ impl ProviderEntry {
     }
 
     /// Converts this registry entry into a [`Provider`] consumable by the
-    /// agent builder.  The returned provider has no API key set.
+    /// agent builder. The returned provider has no API key set.
     pub fn to_provider(&self) -> Provider {
-        let mut p = Provider::cloud(&self.id, &self.name, &self.base_url().unwrap_or_default());
-        p.api_format = Some(self.api_format());
-        p
+        Provider::cloud(
+            &self.id,
+            &self.name,
+            &self.base_url().unwrap_or_default(),
+            self.api_format(),
+        )
     }
 }

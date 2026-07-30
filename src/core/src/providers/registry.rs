@@ -60,7 +60,14 @@ impl ProviderRegistry {
     }
 
     async fn fetch_remote(&self) -> std::result::Result<ProviderMap, String> {
-        let resp = reqwest::get(MODELS_DEV_URL)
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .build()
+            .map_err(|e| format!("Failed to create HTTP client: {e}"))?;
+
+        let resp = client
+            .get(MODELS_DEV_URL)
+            .send()
             .await
             .map_err(|e| format!("HTTP request failed: {e}"))?;
 

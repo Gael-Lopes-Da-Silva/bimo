@@ -175,9 +175,7 @@ pub fn manage_todo(
     id: Option<String>,
     status: Option<String>,
 ) -> Tool {
-    let todo_list = TODO_LIST
-        .get()
-        .ok_or_else(|| "Todo list not initialized".to_string())?;
+    let todo_list = TODO_LIST.get_or_init(new_shared_todolist);
 
     let mut list = todo_list.lock().map_err(|e| format!("Lock error: {}", e))?;
 

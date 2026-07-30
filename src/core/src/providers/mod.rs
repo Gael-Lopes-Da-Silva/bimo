@@ -13,11 +13,32 @@ use crate::error::BimoError;
 
 /// Built-in local providers known to the system (ollama, lmstudio, vllm, llamacpp).
 pub fn builtin_local_providers() -> Vec<Provider> {
+    use crate::config::ApiFormat;
     vec![
-        Provider::local("ollama", "Ollama", "http://localhost:11434/v1"),
-        Provider::local("lmstudio", "LM Studio", "http://localhost:1234/v1"),
-        Provider::local("vllm", "vLLM", "http://localhost:8000/v1"),
-        Provider::local("llamacpp", "llama.cpp", "http://localhost:8080/v1"),
+        Provider::local(
+            "ollama",
+            "Ollama",
+            "http://localhost:11434/v1",
+            ApiFormat::OpenAICompatible,
+        ),
+        Provider::local(
+            "lmstudio",
+            "LM Studio",
+            "http://localhost:1234/v1",
+            ApiFormat::OpenAICompatible,
+        ),
+        Provider::local(
+            "vllm",
+            "vLLM",
+            "http://localhost:8000/v1",
+            ApiFormat::OpenAICompatible,
+        ),
+        Provider::local(
+            "llamacpp",
+            "llama.cpp",
+            "http://localhost:8080/v1",
+            ApiFormat::OpenAICompatible,
+        ),
     ]
 }
 

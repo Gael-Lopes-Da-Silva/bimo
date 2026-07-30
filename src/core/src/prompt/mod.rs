@@ -44,12 +44,15 @@ impl PromptEngine {
             "DATE".to_string(),
             chrono::Utc::now().date_naive().to_string(),
         );
-        default_vars.insert(
-            "CWD".to_string(),
-            std::env::current_dir()
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_else(|_| "unknown".to_string()),
-        );
+
+        let cwd = match std::env::current_dir() {
+            Ok(p) => p.to_string_lossy().to_string(),
+            Err(e) => {
+                tracing::warn!("Failed to get current directory: {}", e);
+                "unknown".to_string()
+            }
+        };
+        default_vars.insert("CWD".to_string(), cwd);
 
         for (k, v) in vars {
             default_vars.insert(k.clone(), v.clone());

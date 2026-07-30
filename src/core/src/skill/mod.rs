@@ -1,6 +1,7 @@
 use serde::Deserialize;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use tracing::warn;
 
 /// A loaded skill with metadata and instruction content.
 #[derive(Debug, Clone)]
@@ -72,11 +73,22 @@ pub fn load_skills(base_dirs: &[PathBuf]) -> Vec<Skill> {
                 continue;
             };
             let Some((frontmatter, body)) = parse_frontmatter(&content) else {
+                warn!(
+                    "Skill file {} has no frontmatter, skipping",
+                    skill_file.display()
+                );
                 continue;
             };
             let meta: SkillMeta = match serde_yaml::from_str(&frontmatter) {
                 Ok(m) => m,
-                Err(_) => continue,
+                Err(e) => {
+                    warn!(
+                        "Failed to parse frontmatter in {}: {}",
+                        skill_file.display(),
+                        e
+                    );
+                    continue;
+                }
             };
             let name = if meta.name.is_empty() {
                 id.clone()

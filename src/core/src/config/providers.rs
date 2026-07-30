@@ -26,7 +26,7 @@ pub enum ApiFormat {
 
 /// A configured provider (local or cloud).
 ///
-/// Serialized as an entry in `providers.json`.  For cloud providers the user
+/// Serialized as an entry in `providers.json`. For cloud providers the user
 /// supplies the `api_key`; the `base_url` may be filled automatically from
 /// the models.dev registry if left empty.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,13 +40,12 @@ pub struct Provider {
     pub provider_type: ProviderType,
     #[serde(default)]
     pub models: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub api_format: Option<ApiFormat>,
+    pub api_format: ApiFormat,
 }
 
 impl Provider {
     /// Creates a local provider with the given identity and base URL.
-    pub fn local(id: &str, name: &str, base_url: &str) -> Self {
+    pub fn local(id: &str, name: &str, base_url: &str, api_format: ApiFormat) -> Self {
         Self {
             id: id.to_string(),
             name: name.to_string(),
@@ -54,12 +53,12 @@ impl Provider {
             api_key: None,
             provider_type: ProviderType::Local,
             models: Vec::new(),
-            api_format: None,
+            api_format,
         }
     }
 
     /// Creates a cloud provider with the given identity and base URL.
-    pub fn cloud(id: &str, name: &str, base_url: &str) -> Self {
+    pub fn cloud(id: &str, name: &str, base_url: &str, api_format: ApiFormat) -> Self {
         Self {
             id: id.to_string(),
             name: name.to_string(),
@@ -67,7 +66,7 @@ impl Provider {
             api_key: None,
             provider_type: ProviderType::Cloud,
             models: Vec::new(),
-            api_format: None,
+            api_format,
         }
     }
 
@@ -79,13 +78,6 @@ impl Provider {
     /// Returns `true` if this provider is a cloud service.
     pub fn is_cloud(&self) -> bool {
         matches!(self.provider_type, ProviderType::Cloud)
-    }
-
-    /// Returns the API format, defaulting to `OpenAICompatible` when unset.
-    pub fn effective_api_format(&self) -> ApiFormat {
-        self.api_format
-            .clone()
-            .unwrap_or(ApiFormat::OpenAICompatible)
     }
 }
 

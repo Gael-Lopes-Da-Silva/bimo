@@ -135,7 +135,7 @@ impl AgentBuilder {
 
         let max_steps = self.max_steps.unwrap_or(self.settings.max_steps);
 
-        let api_format = provider.effective_api_format();
+        let api_format = provider.api_format;
 
         let runner = AgentRunner {
             provider_name: provider.name,
