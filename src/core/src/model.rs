@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::error::Result;
 use crate::provider::{self, ProviderRuntime, RawModel};
 use serde::{Deserialize, Serialize};
@@ -8,19 +10,59 @@ pub struct ModelInfo {
     pub name: String,
     pub provider_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub context_window: Option<u32>,
+    pub context_window: Option<u64>,
+}
+
+const MODELS_DEV_URL: &str = "https://models.dev/api.json";
+
+static MODELS_DEV_CACHE: tokio::sync::OnceCell<HashMap<String, u64>> =
+    tokio::sync::OnceCell::const_new();
+
+pub async fn get_models_dev_contexts() -> &'static HashMap<String, u64> {
+    MODELS_DEV_CACHE
+        .get_or_init(|| async {
+            let mut map = HashMap::new();
+
+            let Ok(resp) = reqwest::get(MODELS_DEV_URL).await else {
+                return map;
+            };
+            let Ok(raw) = resp.json::<serde_json::Value>().await else {
+                return map;
+            };
+
+            let Some(obj) = raw.as_object() else {
+                return map;
+            };
+            for (provider_id, provider_val) in obj {
+                let Some(models) = provider_val.get("models").and_then(|m| m.as_object()) else {
+                    continue;
+                };
+                for (model_id, model_info) in models {
+                    if let Some(ctx) = model_info
+                        .get("limit")
+                        .and_then(|l| l.get("context"))
+                        .and_then(|c| c.as_u64())
+                    {
+                        map.insert(format!("{}:{}", provider_id, model_id), ctx);
+                    }
+                }
+            }
+
+            map
+        })
+        .await
 }
 
 pub async fn fetch_models_for_provider(runtime: &ProviderRuntime) -> Result<Vec<ModelInfo>> {
     let raw_models: Vec<RawModel> = provider::fetch_models(runtime).await?;
+    let ctx_map = get_models_dev_contexts().await;
     let models = raw_models
         .into_iter()
         .map(|rm| {
             let id = rm.id.clone();
             let name = rm.name.unwrap_or_else(|| id.clone());
-            let context_window = rm
-                .context_window
-                .or_else(|| lookup_known_context_window(&id));
+            let key = format!("{}:{}", runtime.id, id);
+            let context_window = ctx_map.get(&key).copied();
             ModelInfo {
                 id,
                 name,
@@ -30,115 +72,4 @@ pub async fn fetch_models_for_provider(runtime: &ProviderRuntime) -> Result<Vec<
         })
         .collect();
     Ok(models)
-}
-
-pub fn lookup_known_context_window(model_id: &str) -> Option<u32> {
-    let lower = model_id.to_lowercase();
-
-    // Anthropic Claude
-    if lower.contains("claude") {
-        if lower.contains("sonnet-4")
-            || lower.contains("opus-4")
-            || lower.contains("haiku-3.5")
-            || lower.contains("3.5")
-            || lower.contains("3-opus")
-            || lower.contains("3-haiku")
-            || lower.contains("3-sonnet")
-        {
-            return Some(200_000);
-        }
-        return Some(100_000);
-    }
-
-    // OpenAI o-series
-    if lower.contains("o3") || lower.contains("o4") || lower.contains("o1") {
-        return Some(200_000);
-    }
-
-    // GPT 4.1 series
-    if lower.contains("gpt-4.1") || lower.contains("gpt4.1") {
-        return Some(1_000_000);
-    }
-
-    // GPT-4.5 series
-    if lower.contains("gpt-4.5") || lower.contains("gpt4.5") {
-        return Some(128_000);
-    }
-
-    // GPT-4o / GPT-4 Turbo
-    if lower.contains("gpt-4o")
-        || lower.contains("gpt4o")
-        || lower.contains("gpt-4-turbo")
-        || lower.contains("gpt4turbo")
-    {
-        return Some(128_000);
-    }
-
-    // GPT-4
-    if lower.contains("gpt-4") || lower.contains("gpt4") {
-        return Some(8_192);
-    }
-
-    // GPT-3.5
-    if lower.contains("gpt-3.5") || lower.contains("gpt3.5") {
-        return Some(16_385);
-    }
-
-    // Gemini
-    if lower.contains("gemini") {
-        if lower.contains("1.5") {
-            return if lower.contains("pro") {
-                Some(2_000_000)
-            } else {
-                Some(1_000_000)
-            };
-        }
-        return Some(1_000_000);
-    }
-
-    // Llama
-    if lower.contains("llama") {
-        if lower.contains("llama2") || lower.contains("llama-2") {
-            return Some(4_096);
-        }
-        if lower.contains("3.1") || lower.contains("3.2") || lower.contains("3.3") {
-            return Some(128_000);
-        }
-        if lower.contains("llama3") || lower.contains("llama-3") {
-            return Some(8_192);
-        }
-        return Some(128_000);
-    }
-
-    // DeepSeek
-    if lower.contains("deepseek") {
-        return Some(128_000);
-    }
-
-    // Mistral / Mixtral / Codestral
-    if lower.contains("codestral") {
-        return Some(256_000);
-    }
-    if lower.contains("mistral") || lower.contains("mixtral") {
-        return Some(128_000);
-    }
-
-    // Qwen
-    if lower.contains("qwen") {
-        if lower.contains("qwen2.5")
-            || lower.contains("qwen-2.5")
-            || lower.contains("qwen3")
-            || lower.contains("qwen-3")
-        {
-            return Some(128_000);
-        }
-        return Some(32_768);
-    }
-
-    // Command R
-    if lower.contains("command-r") || lower.contains("command-r-plus") {
-        return Some(128_000);
-    }
-
-    None
 }

@@ -51,8 +51,6 @@ pub struct RawModel {
     pub id: String,
     #[serde(default)]
     pub name: Option<String>,
-    #[serde(default)]
-    pub context_window: Option<u32>,
 }
 
 #[derive(Debug, Clone)]

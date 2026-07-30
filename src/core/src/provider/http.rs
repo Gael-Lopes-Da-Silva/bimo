@@ -53,37 +53,11 @@ fn parse_models_response(raw: &serde_json::Value) -> Result<Vec<RawModel>> {
         .filter_map(|v| {
             let id = v.get("id")?.as_str()?.to_string();
             let name = v.get("name").and_then(|n| n.as_str()).map(String::from);
-            let context_window = extract_context_window(&v);
-            Some(RawModel {
-                id,
-                name,
-                context_window,
-            })
+            Some(RawModel { id, name })
         })
         .collect();
 
     Ok(models)
-}
-
-fn extract_context_window(model: &serde_json::Value) -> Option<u32> {
-    for key in &[
-        "context_length",
-        "max_context",
-        "context_window",
-        "max_context_length",
-    ] {
-        if let Some(val) = model.get(*key) {
-            if let Some(n) = val.as_u64() {
-                return Some(n as u32);
-            }
-            if let Some(s) = val.as_str()
-                && let Ok(n) = s.parse::<u32>()
-            {
-                return Some(n);
-            }
-        }
-    }
-    None
 }
 
 fn apply_auth(
