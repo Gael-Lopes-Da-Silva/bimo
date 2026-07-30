@@ -1,27 +1,36 @@
-use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
-#[derive(Debug, Clone, Serialize, Deserialize, thiserror::Error)]
+#[derive(Error, Debug)]
 pub enum BimoError {
-    #[error("config: {0}")]
+    #[error("Configuration error: {0}")]
     Config(String),
 
-    #[error("provider: {0}")]
-    Provider(String),
-
-    #[error("model: {0}")]
-    Model(String),
-
-    #[error("session: {0}")]
+    #[error("Session error: {0}")]
     Session(String),
 
-    #[error("network: {0}")]
-    Network(String),
+    #[error("Agent error: {0}")]
+    Agent(String),
 
-    #[error("api: {0}")]
-    Api(String),
+    #[error("Tool error: {0}")]
+    Tool(String),
 
-    #[error("serialization: {0}")]
-    Serialization(String),
+    #[error("Prompt error: {0}")]
+    Prompt(String),
+
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+
+    #[error("Serialization error: {0}")]
+    Serde(#[from] serde_json::Error),
+
+    #[error("YAML deserialization error: {0}")]
+    SerdeYaml(#[from] serde_yaml::Error),
+
+    #[error("AI provider error: {0}")]
+    Provider(String),
+
+    #[error("{0}")]
+    Other(String),
 }
 
 pub type Result<T> = std::result::Result<T, BimoError>;

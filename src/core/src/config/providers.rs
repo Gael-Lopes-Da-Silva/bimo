@@ -1,94 +1,61 @@
-use crate::config::{ensure_config_dir, read_json, write_json};
-use crate::error::{BimoError, Result};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-
-const PROVIDERS_FILE: &str = "providers.json";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProviderPersistedConfig {
-    pub base_url: String,
+pub struct ProviderConfig {
+    pub name: String,
+    pub model: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub api_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CustomProviderConfig {
-    pub id: String,
-    pub name: String,
-    pub category: String,
-    pub base_url: String,
-    pub api_key_required: bool,
-    pub chat_endpoint: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub models_endpoint: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub auth_header: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub auth_prefix: Option<String>,
+pub struct ProvidersFile {
+    pub providers: Vec<ProviderConfig>,
+    #[serde(default)]
+    pub default: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct ProvidersConfig {
-    /// Per-provider configuration (base URLs, API keys, etc.).
-    #[serde(default)]
-    pub configured: HashMap<String, ProviderPersistedConfig>,
-    /// User-registered custom providers.
-    #[serde(default)]
-    pub custom: Vec<CustomProviderConfig>,
-}
-
-impl ProvidersConfig {
-    pub fn load() -> Self {
-        match read_json(PROVIDERS_FILE) {
-            Ok(p) => p,
-            Err(_) => {
-                let p = Self::default();
-                let _ = p.save();
-                p
-            }
-        }
+impl ProvidersFile {
+    pub fn default_path() -> std::path::PathBuf {
+        Self::bimo_dir().join("providers.json")
     }
 
-    pub fn save(&self) -> Result<()> {
-        ensure_config_dir()?;
-        write_json(PROVIDERS_FILE, self)
+    pub fn bimo_dir() -> std::path::PathBuf {
+        dirs::config_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("~/.config"))
+            .join("bimo")
     }
 
-    pub fn configure_provider(
-        &mut self,
-        id: &str,
-        base_url: Option<String>,
-        api_key: Option<String>,
-        default_base_url: &str,
-    ) -> Result<()> {
-        let entry =
-            self.configured
-                .entry(id.to_string())
-                .or_insert_with(|| ProviderPersistedConfig {
-                    base_url: default_base_url.to_string(),
-                    api_key: None,
-                });
-        if let Some(url) = base_url {
-            entry.base_url = url;
+    pub fn load() -> crate::Result<Self> {
+        let path = Self::default_path();
+        if !path.exists() {
+            return Ok(Self {
+                providers: Vec::new(),
+                default: None,
+            });
         }
-        if entry.base_url.is_empty() {
-            entry.base_url = default_base_url.to_string();
-        }
-        if let Some(key) = api_key {
-            entry.api_key = Some(key);
-        }
-        self.save()
+        let content = std::fs::read_to_string(&path)?;
+        Ok(serde_json::from_str(&content)?)
     }
 
-    pub fn add_custom(&mut self, cp: CustomProviderConfig) -> Result<()> {
-        if self.custom.iter().any(|p| p.id == cp.id) {
-            return Err(BimoError::Provider(format!(
-                "a provider with id '{}' already exists",
-                cp.id
-            )));
+    pub fn save(&self) -> crate::Result<()> {
+        let path = Self::default_path();
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
         }
-        self.custom.push(cp);
-        self.save()
+        let content = serde_json::to_string_pretty(self)?;
+        std::fs::write(&path, content)?;
+        Ok(())
+    }
+
+    pub fn default_provider(&self) -> Option<&ProviderConfig> {
+        let default_name = self.default.as_deref()?;
+        self.providers.iter().find(|p| p.name == default_name)
     }
 }

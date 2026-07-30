@@ -1,4 +1,5 @@
-use futures_util::StreamExt;
+use aisdk::core::LanguageModelStreamChunkType;
+use futures::StreamExt;
 use serde::Serialize;
 use tokio::sync::mpsc;
 
@@ -8,10 +9,10 @@ use crate::context::{ProjectContext, build_project_context};
 use crate::error::{BimoError, Result};
 use crate::model::ModelInfo;
 use crate::prompts;
-use crate::provider::http::{chat_completion_streaming, extract_stream_delta};
+use crate::provider::aisdk::AisdkProvider;
 use crate::provider::registry::ProviderRegistry;
 use crate::provider::types::{ProviderRuntime, UsageInfo};
-use crate::session::Session;
+use crate::session::{Role, Session};
 use crate::tool::execute::execute_tool;
 use crate::tool::{ToolRegistry, default_tools};
 

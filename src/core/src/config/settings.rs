@@ -1,46 +1,80 @@
-use crate::config::{ensure_config_dir, read_json, write_json};
-use crate::error::Result;
 use serde::{Deserialize, Serialize};
 
-const SETTINGS_FILE: &str = "settings.json";
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Settings {
+    #[serde(default = "default_session_ttl_hours")]
+    pub session_ttl_hours: u64,
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct ThinkingConfig {
+    #[serde(default = "default_max_sessions")]
+    pub max_sessions: usize,
+
+    #[serde(default = "default_cleanup_interval_minutes")]
+    pub cleanup_interval_minutes: u64,
+
+    #[serde(default = "default_max_steps")]
+    pub max_steps: usize,
+
     #[serde(default)]
-    pub enabled: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub budget_tokens: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reasoning_effort: Option<String>,
+    pub default_provider: Option<String>,
+
+    #[serde(default)]
+    pub default_model: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct Settings {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub selected_provider: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub selected_model: Option<String>,
-    #[serde(default)]
-    pub thinking: ThinkingConfig,
-    /// Max tool call iterations per chat request. None = no limit.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_tool_iterations: Option<usize>,
+fn default_session_ttl_hours() -> u64 {
+    24
+}
+
+fn default_max_sessions() -> usize {
+    50
+}
+
+fn default_cleanup_interval_minutes() -> u64 {
+    30
+}
+
+fn default_max_steps() -> usize {
+    25
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            session_ttl_hours: default_session_ttl_hours(),
+            max_sessions: default_max_sessions(),
+            cleanup_interval_minutes: default_cleanup_interval_minutes(),
+            max_steps: default_max_steps(),
+            default_provider: None,
+            default_model: None,
+        }
+    }
 }
 
 impl Settings {
-    pub fn load() -> Self {
-        match read_json(SETTINGS_FILE) {
-            Ok(s) => s,
-            Err(_) => {
-                let s = Self::default();
-                let _ = s.save();
-                s
-            }
-        }
+    pub fn path() -> std::path::PathBuf {
+        let base = dirs::config_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("~/.config"));
+        base.join("bimo").join("settings.json")
     }
 
-    pub fn save(&self) -> Result<()> {
-        ensure_config_dir()?;
-        write_json(SETTINGS_FILE, self)
+    pub fn load() -> crate::Result<Self> {
+        let path = Self::path();
+        if !path.exists() {
+            let settings = Settings::default();
+            settings.save()?;
+            return Ok(settings);
+        }
+        let content = std::fs::read_to_string(&path)?;
+        Ok(serde_json::from_str(&content)?)
+    }
+
+    pub fn save(&self) -> crate::Result<()> {
+        let path = Self::path();
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let content = serde_json::to_string_pretty(self)?;
+        std::fs::write(&path, content)?;
+        Ok(())
     }
 }
