@@ -99,6 +99,43 @@ impl Session {
         }
         Ok(())
     }
+
+    /// Creates a branched checkpoint from the current session state.
+    pub fn branch_checkpoint(&self, branch_id: &str) -> crate::Result<Self> {
+        let mut branch = self.clone();
+        branch.id = format!("{}_{}", self.id, branch_id);
+        branch.save()?;
+        Ok(branch)
+    }
+
+    /// Restores session to a checkpoint file by id.
+    pub fn restore_checkpoint(checkpoint_id: &str) -> crate::Result<Self> {
+        Self::load(checkpoint_id)
+    }
+
+    /// Exports session to Markdown file.
+    pub fn export_markdown(&self, path: &std::path::Path) -> crate::Result<()> {
+        let mut md = format!(
+            "# Session {}\n\nCreated: {}\nUpdated: {}\n\n",
+            self.id, self.created_at, self.updated_at
+        );
+        md.push_str("## Messages\n\n");
+        for msg in &self.messages {
+            md.push_str(&format!(
+                "- **[{}] {}**: {}\n",
+                msg.role, msg.timestamp, msg.content
+            ));
+        }
+        std::fs::write(path, md)?;
+        Ok(())
+    }
+
+    /// Exports session to JSON file.
+    pub fn export_json(&self, path: &std::path::Path) -> crate::Result<()> {
+        let content = serde_json::to_string_pretty(self)?;
+        std::fs::write(path, content)?;
+        Ok(())
+    }
 }
 
 impl Default for Session {

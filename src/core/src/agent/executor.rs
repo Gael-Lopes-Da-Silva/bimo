@@ -23,7 +23,7 @@ type AnthropicModel = Anthropic<DynamicModel>;
 type GoogleModel = Google<DynamicModel>;
 
 /// Events emitted by the agent during a streaming run.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum AgentEvent {
     /// A text delta from the model.
     TextDelta(String),
@@ -64,6 +64,10 @@ pub(crate) struct AgentRunner {
     pub max_steps: usize,
     pub temperature: Option<f32>,
     pub max_tokens: Option<u32>,
+    pub debug: bool,
+    pub session_id: String,
+    pub retry_attempts: usize,
+    pub retry_timeout_secs: u64,
 }
 
 /// Erased model type — dispatches to the concrete provider SDK at build time.
@@ -304,6 +308,11 @@ impl AgentRunner {
         model: M,
         tx: broadcast::Sender<AgentEvent>,
     ) {
+        let debug_path = if self.debug {
+            Some(Session::sessions_dir().join(format!("{}_events.json", self.session_id)))
+        } else {
+            None
+        };
         let mut request = self.build_request(model);
         match request.stream_text().await {
             Ok(response) => {
@@ -311,33 +320,190 @@ impl AgentRunner {
                 while let Some(chunk) = stream.next().await {
                     match chunk {
                         LanguageModelStreamChunkType::Text(text) => {
-                            let _ = tx.send(AgentEvent::TextDelta(text));
+                            let event = AgentEvent::TextDelta(text);
+                            if self.debug {
+                                if let Some(path) = &debug_path {
+                                    let mut file = std::fs::OpenOptions::new()
+                                        .create(true)
+                                        .append(true)
+                                        .open(path)
+                                        .unwrap();
+                                    use std::io::Write;
+                                    let _ = writeln!(
+                                        file,
+                                        "{}",
+                                        serde_json::to_string(&event).unwrap_or_default()
+                                    );
+                                }
+                            }
+                            let _ = tx.send(event);
                         }
                         LanguageModelStreamChunkType::Reasoning(text) => {
-                            let _ = tx.send(AgentEvent::ReasoningDelta(text));
+                            let event = AgentEvent::ReasoningDelta(text);
+                            if self.debug {
+                                if let Some(path) = &debug_path {
+                                    let mut file = std::fs::OpenOptions::new()
+                                        .create(true)
+                                        .append(true)
+                                        .open(path)
+                                        .unwrap();
+                                    use std::io::Write;
+                                    let _ = writeln!(
+                                        file,
+                                        "{}",
+                                        serde_json::to_string(&event).unwrap_or_default()
+                                    );
+                                }
+                            }
+                            let _ = tx.send(event);
                         }
                         LanguageModelStreamChunkType::End(_) => {
-                            let _ = tx.send(AgentEvent::Done);
+                            let event = AgentEvent::Done;
+                            if self.debug {
+                                if let Some(path) = &debug_path {
+                                    let mut file = std::fs::OpenOptions::new()
+                                        .create(true)
+                                        .append(true)
+                                        .open(path)
+                                        .unwrap();
+                                    use std::io::Write;
+                                    let _ = writeln!(
+                                        file,
+                                        "{}",
+                                        serde_json::to_string(&event).unwrap_or_default()
+                                    );
+                                }
+                            }
+                            let _ = tx.send(event);
                             return;
                         }
                         LanguageModelStreamChunkType::Failed(err) => {
-                            let _ = tx.send(AgentEvent::Error(err));
-                            let _ = tx.send(AgentEvent::Done);
+                            let event = AgentEvent::Error(err);
+                            if self.debug {
+                                if let Some(path) = &debug_path {
+                                    let mut file = std::fs::OpenOptions::new()
+                                        .create(true)
+                                        .append(true)
+                                        .open(path)
+                                        .unwrap();
+                                    use std::io::Write;
+                                    let _ = writeln!(
+                                        file,
+                                        "{}",
+                                        serde_json::to_string(&event).unwrap_or_default()
+                                    );
+                                }
+                            }
+                            let done = AgentEvent::Done;
+                            if self.debug {
+                                if let Some(path) = &debug_path {
+                                    let mut file = std::fs::OpenOptions::new()
+                                        .create(true)
+                                        .append(true)
+                                        .open(path)
+                                        .unwrap();
+                                    use std::io::Write;
+                                    let _ = writeln!(
+                                        file,
+                                        "{}",
+                                        serde_json::to_string(&done).unwrap_or_default()
+                                    );
+                                }
+                            }
+                            let _ = tx.send(event);
+                            let _ = tx.send(done);
                             return;
                         }
                         LanguageModelStreamChunkType::Incomplete(msg) => {
-                            let _ = tx.send(AgentEvent::TextDelta(msg));
-                            let _ = tx.send(AgentEvent::Done);
+                            let event = AgentEvent::TextDelta(msg);
+                            if self.debug {
+                                if let Some(path) = &debug_path {
+                                    let mut file = std::fs::OpenOptions::new()
+                                        .create(true)
+                                        .append(true)
+                                        .open(path)
+                                        .unwrap();
+                                    use std::io::Write;
+                                    let _ = writeln!(
+                                        file,
+                                        "{}",
+                                        serde_json::to_string(&event).unwrap_or_default()
+                                    );
+                                }
+                            }
+                            let done = AgentEvent::Done;
+                            if self.debug {
+                                if let Some(path) = &debug_path {
+                                    let mut file = std::fs::OpenOptions::new()
+                                        .create(true)
+                                        .append(true)
+                                        .open(path)
+                                        .unwrap();
+                                    use std::io::Write;
+                                    let _ = writeln!(
+                                        file,
+                                        "{}",
+                                        serde_json::to_string(&done).unwrap_or_default()
+                                    );
+                                }
+                            }
+                            let _ = tx.send(event);
+                            let _ = tx.send(done);
                             return;
                         }
                         _ => {}
                     }
                 }
-                let _ = tx.send(AgentEvent::Done);
+                let event = AgentEvent::Done;
+                if self.debug {
+                    if let Some(path) = &debug_path {
+                        let mut file = std::fs::OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open(path)
+                            .unwrap();
+                        use std::io::Write;
+                        let _ = writeln!(
+                            file,
+                            "{}",
+                            serde_json::to_string(&event).unwrap_or_default()
+                        );
+                    }
+                }
+                let _ = tx.send(event);
             }
             Err(e) => {
-                let _ = tx.send(AgentEvent::Error(e.to_string()));
-                let _ = tx.send(AgentEvent::Done);
+                let error_event = AgentEvent::Error(e.to_string());
+                if self.debug {
+                    if let Some(path) = &debug_path {
+                        let mut file = std::fs::OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open(path)
+                            .unwrap();
+                        use std::io::Write;
+                        let _ = writeln!(
+                            file,
+                            "{}",
+                            serde_json::to_string(&error_event).unwrap_or_default()
+                        );
+                    }
+                }
+                let done = AgentEvent::Done;
+                if self.debug {
+                    if let Some(path) = &debug_path {
+                        let mut file = std::fs::OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open(path)
+                            .unwrap();
+                        use std::io::Write;
+                        let _ =
+                            writeln!(file, "{}", serde_json::to_string(&done).unwrap_or_default());
+                    }
+                }
+                let _ = tx.send(error_event);
+                let _ = tx.send(done);
             }
         }
     }
@@ -364,10 +530,31 @@ impl AgentRunner {
 
     /// Runs the agent with streaming — emits [`AgentEvent`]s into the channel.
     async fn execute_stream(self, tx: broadcast::Sender<AgentEvent>) {
+        let debug_path = if self.debug {
+            Some(Session::sessions_dir().join(format!("{}_events.json", self.session_id)))
+        } else {
+            None
+        };
         let model = match self.build_model().await {
             Ok(m) => m,
             Err(e) => {
-                let _ = tx.send(AgentEvent::Error(e));
+                let event = AgentEvent::Error(e);
+                if self.debug {
+                    if let Some(path) = &debug_path {
+                        let mut file = std::fs::OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open(path)
+                            .unwrap();
+                        use std::io::Write;
+                        let _ = writeln!(
+                            file,
+                            "{}",
+                            serde_json::to_string(&event).unwrap_or_default()
+                        );
+                    }
+                }
+                let _ = tx.send(event.clone());
                 let _ = tx.send(AgentEvent::Done);
                 return;
             }

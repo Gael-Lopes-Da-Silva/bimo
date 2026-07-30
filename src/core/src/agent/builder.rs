@@ -27,6 +27,8 @@ pub struct AgentBuilder {
     max_steps: Option<usize>,
     temperature: Option<f32>,
     max_tokens: Option<u32>,
+    retry_attempts: Option<usize>,
+    retry_timeout_secs: Option<u64>,
 }
 
 impl AgentBuilder {
@@ -42,6 +44,8 @@ impl AgentBuilder {
             max_steps: None,
             temperature: None,
             max_tokens: None,
+            retry_attempts: None,
+            retry_timeout_secs: None,
         }
     }
 
@@ -101,6 +105,18 @@ impl AgentBuilder {
         self
     }
 
+    /// Sets retry attempts for failed steps.
+    pub fn with_retry_attempts(mut self, attempts: usize) -> Self {
+        self.retry_attempts = Some(attempts);
+        self
+    }
+
+    /// Sets retry timeout in seconds.
+    pub fn with_retry_timeout(mut self, timeout: u64) -> Self {
+        self.retry_timeout_secs = Some(timeout);
+        self
+    }
+
     /// Consumes the builder and produces an [`Agent`].
     ///
     /// # Errors
@@ -148,6 +164,16 @@ impl AgentBuilder {
             max_steps,
             temperature: self.temperature,
             max_tokens: self.max_tokens,
+            debug: self.settings.debug,
+            session_id: self
+                .session
+                .as_ref()
+                .map(|s| s.id.clone())
+                .unwrap_or_default(),
+            retry_attempts: self.retry_attempts.unwrap_or(self.settings.retry_attempts),
+            retry_timeout_secs: self
+                .retry_timeout_secs
+                .unwrap_or(self.settings.retry_timeout_secs),
         };
 
         let session = self.session.unwrap_or_default();

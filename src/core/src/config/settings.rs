@@ -30,6 +30,18 @@ pub struct Settings {
     /// Default model id used when none is specified at build time.
     #[serde(default)]
     pub default_model: Option<String>,
+
+    /// Enables debug logging and event persistence.
+    #[serde(default)]
+    pub debug: bool,
+
+    /// Maximum retry attempts for failed agent steps.
+    #[serde(default = "default_retry_attempts")]
+    pub retry_attempts: usize,
+
+    /// Timeout in seconds before retrying a failed step.
+    #[serde(default = "default_retry_timeout_secs")]
+    pub retry_timeout_secs: u64,
 }
 
 fn default_session_ttl_hours() -> u64 {
@@ -48,6 +60,14 @@ fn default_max_steps() -> usize {
     25
 }
 
+fn default_retry_attempts() -> usize {
+    3
+}
+
+fn default_retry_timeout_secs() -> u64 {
+    5
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -57,6 +77,9 @@ impl Default for Settings {
             max_steps: default_max_steps(),
             default_provider: None,
             default_model: None,
+            debug: false,
+            retry_attempts: default_retry_attempts(),
+            retry_timeout_secs: default_retry_timeout_secs(),
         }
     }
 }
