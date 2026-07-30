@@ -1,7 +1,9 @@
 //! Agent execution — model dispatching, streaming, event emission.
 
 use aisdk::core::capabilities::{TextInputSupport, ToolCallSupport};
-use aisdk::core::{DynamicModel, LanguageModel, LanguageModelStreamChunkType};
+use aisdk::core::{
+    DynamicModel, LanguageModel, LanguageModelRequest, LanguageModelStreamChunkType,
+};
 use aisdk::providers::{Anthropic, OpenAICompatible};
 use futures::StreamExt;
 use tokio::sync::broadcast;
@@ -112,123 +114,6 @@ impl ModelProvider {
             .map(|m| Self::Anthropic(Box::new(m)))
             .map_err(|e| format!("Failed to build Anthropic model: {e}"))
     }
-
-    async fn execute(
-        self,
-        system_prompt: &str,
-        user_prompt: &str,
-        max_steps: usize,
-    ) -> std::result::Result<(), String> {
-        match self {
-            Self::OpenAI(model) => {
-                execute_model(*model, system_prompt, user_prompt, max_steps).await
-            }
-            Self::Anthropic(model) => {
-                execute_model(*model, system_prompt, user_prompt, max_steps).await
-            }
-        }
-    }
-
-    async fn execute_stream(
-        self,
-        system_prompt: &str,
-        user_prompt: &str,
-        max_steps: usize,
-        tx: broadcast::Sender<AgentEvent>,
-    ) {
-        match self {
-            Self::OpenAI(model) => {
-                execute_model_stream(*model, system_prompt, user_prompt, max_steps, tx).await
-            }
-            Self::Anthropic(model) => {
-                execute_model_stream(*model, system_prompt, user_prompt, max_steps, tx).await
-            }
-        }
-    }
-}
-
-async fn execute_model<M: LanguageModel + TextInputSupport + ToolCallSupport>(
-    model: M,
-    system_prompt: &str,
-    user_prompt: &str,
-    max_steps: usize,
-) -> std::result::Result<(), String> {
-    let tools = tools::all_tools();
-
-    let mut req_builder = aisdk::core::LanguageModelRequest::<M>::builder()
-        .model(model)
-        .system(system_prompt)
-        .prompt(user_prompt);
-
-    for tool in tools {
-        req_builder = req_builder.with_tool(tool);
-    }
-
-    let mut request = req_builder
-        .stop_when(aisdk::core::utils::step_count_is(max_steps))
-        .build();
-
-    request.generate_text().await.map_err(|e| e.to_string())?;
-    Ok(())
-}
-
-async fn execute_model_stream<M: LanguageModel + TextInputSupport + ToolCallSupport>(
-    model: M,
-    system_prompt: &str,
-    user_prompt: &str,
-    max_steps: usize,
-    tx: broadcast::Sender<AgentEvent>,
-) {
-    let tools = tools::all_tools();
-
-    let mut req_builder = aisdk::core::LanguageModelRequest::<M>::builder()
-        .model(model)
-        .system(system_prompt)
-        .prompt(user_prompt);
-
-    for tool in tools {
-        req_builder = req_builder.with_tool(tool);
-    }
-
-    let mut request = req_builder
-        .stop_when(aisdk::core::utils::step_count_is(max_steps))
-        .build();
-
-    match request.stream_text().await {
-        Ok(response) => {
-            let mut stream = response.stream;
-            while let Some(chunk) = stream.next().await {
-                match chunk {
-                    LanguageModelStreamChunkType::Text(text) => {
-                        let _ = tx.send(AgentEvent::TextDelta(text));
-                    }
-                    LanguageModelStreamChunkType::Reasoning(text) => {
-                        let _ = tx.send(AgentEvent::ReasoningDelta(text));
-                    }
-                    LanguageModelStreamChunkType::End(_) => {
-                        let _ = tx.send(AgentEvent::Done);
-                        return;
-                    }
-                    LanguageModelStreamChunkType::Failed(err) => {
-                        let _ = tx.send(AgentEvent::Error(err));
-                        let _ = tx.send(AgentEvent::Done);
-                        return;
-                    }
-                    LanguageModelStreamChunkType::Incomplete(msg) => {
-                        let _ = tx.send(AgentEvent::TextDelta(msg));
-                        let _ = tx.send(AgentEvent::Done);
-                        return;
-                    }
-                    _ => {}
-                }
-            }
-            let _ = tx.send(AgentEvent::Done);
-        }
-        Err(e) => {
-            let _ = tx.send(AgentEvent::Error(e.to_string()));
-            let _ = tx.send(AgentEvent::Done);
-        }
-    }
 }
 
 impl Agent {
@@ -292,41 +177,78 @@ impl Agent {
 
         Ok(rx)
     }
-
-    /// Runs the agent and collects the output as a plain string.
-    ///
-    /// The agent is consumed (may only be run once).
-    pub async fn run_text(&mut self) -> Result<String> {
-        let mut rx = self.run().await?;
-        let mut output = String::new();
-
-        while let Ok(event) = rx.recv().await {
-            match event {
-                AgentEvent::TextDelta(text) => output.push_str(&text),
-                AgentEvent::ToolCallStart { tool_name, args } => {
-                    output.push_str(&format!("\n[Tool: {tool_name}({args})]\n"));
-                }
-                AgentEvent::ToolCallEnd {
-                    tool_name: _,
-                    result,
-                } => match result {
-                    Ok(r) => output.push_str(&format!("[Result: {r}]\n")),
-                    Err(e) => output.push_str(&format!("[Error: {e}]\n")),
-                },
-                AgentEvent::Done => break,
-                AgentEvent::Error(e) => {
-                    output.push_str(&format!("\n[Error: {e}]\n"));
-                    break;
-                }
-                _ => {}
-            }
-        }
-
-        Ok(output)
-    }
 }
 
 impl AgentRunner {
+    fn build_request<M: LanguageModel + TextInputSupport + ToolCallSupport>(
+        &self,
+        model: M,
+    ) -> LanguageModelRequest<M> {
+        let tools = tools::all_tools();
+        let mut req_builder = LanguageModelRequest::<M>::builder()
+            .model(model)
+            .system(&self.system_prompt)
+            .prompt(&self.user_prompt);
+        for tool in tools {
+            req_builder = req_builder.with_tool(tool);
+        }
+        req_builder
+            .stop_when(aisdk::core::utils::step_count_is(self.max_steps))
+            .build()
+    }
+
+    async fn execute_model<M: LanguageModel + TextInputSupport + ToolCallSupport>(
+        &self,
+        model: M,
+    ) -> std::result::Result<(), String> {
+        let mut request = self.build_request(model);
+        request.generate_text().await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    async fn execute_model_stream<M: LanguageModel + TextInputSupport + ToolCallSupport>(
+        &self,
+        model: M,
+        tx: broadcast::Sender<AgentEvent>,
+    ) {
+        let mut request = self.build_request(model);
+        match request.stream_text().await {
+            Ok(response) => {
+                let mut stream = response.stream;
+                while let Some(chunk) = stream.next().await {
+                    match chunk {
+                        LanguageModelStreamChunkType::Text(text) => {
+                            let _ = tx.send(AgentEvent::TextDelta(text));
+                        }
+                        LanguageModelStreamChunkType::Reasoning(text) => {
+                            let _ = tx.send(AgentEvent::ReasoningDelta(text));
+                        }
+                        LanguageModelStreamChunkType::End(_) => {
+                            let _ = tx.send(AgentEvent::Done);
+                            return;
+                        }
+                        LanguageModelStreamChunkType::Failed(err) => {
+                            let _ = tx.send(AgentEvent::Error(err));
+                            let _ = tx.send(AgentEvent::Done);
+                            return;
+                        }
+                        LanguageModelStreamChunkType::Incomplete(msg) => {
+                            let _ = tx.send(AgentEvent::TextDelta(msg));
+                            let _ = tx.send(AgentEvent::Done);
+                            return;
+                        }
+                        _ => {}
+                    }
+                }
+                let _ = tx.send(AgentEvent::Done);
+            }
+            Err(e) => {
+                let _ = tx.send(AgentEvent::Error(e.to_string()));
+                let _ = tx.send(AgentEvent::Done);
+            }
+        }
+    }
+
     async fn build_model(&self) -> std::result::Result<ModelProvider, String> {
         ModelProvider::build(
             &self.api_format,
@@ -338,10 +260,10 @@ impl AgentRunner {
     }
 
     async fn execute(self) -> std::result::Result<(), String> {
-        let model = self.build_model().await?;
-        model
-            .execute(&self.system_prompt, &self.user_prompt, self.max_steps)
-            .await
+        match self.build_model().await? {
+            ModelProvider::OpenAI(model) => self.execute_model(*model).await,
+            ModelProvider::Anthropic(model) => self.execute_model(*model).await,
+        }
     }
 
     async fn execute_stream(self, tx: broadcast::Sender<AgentEvent>) {
@@ -353,8 +275,9 @@ impl AgentRunner {
                 return;
             }
         };
-        model
-            .execute_stream(&self.system_prompt, &self.user_prompt, self.max_steps, tx)
-            .await;
+        match model {
+            ModelProvider::OpenAI(m) => self.execute_model_stream(*m, tx).await,
+            ModelProvider::Anthropic(m) => self.execute_model_stream(*m, tx).await,
+        }
     }
 }
