@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
-use tokio::time::{interval, Duration};
+use tokio::time::{Duration, interval};
 use tracing::{info, warn};
 
 use super::session::Session;
@@ -38,16 +38,14 @@ impl SessionManager {
             let path = entry.path();
             if path.extension().is_some_and(|e| e == "json") {
                 match tokio::fs::read_to_string(&path).await {
-                    Ok(content) => {
-                        match serde_json::from_str::<Session>(&content) {
-                            Ok(session) => {
-                                sessions.insert(session.id.clone(), session);
-                            }
-                            Err(e) => {
-                                warn!("Failed to parse session file {:?}: {}", path, e);
-                            }
+                    Ok(content) => match serde_json::from_str::<Session>(&content) {
+                        Ok(session) => {
+                            sessions.insert(session.id.clone(), session);
                         }
-                    }
+                        Err(e) => {
+                            warn!("Failed to parse session file {:?}: {}", path, e);
+                        }
+                    },
                     Err(e) => {
                         warn!("Failed to read session file {:?}: {}", path, e);
                     }

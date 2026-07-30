@@ -1,9 +1,12 @@
-use std::fs;
 use aisdk::core::tools::Tool;
 use aisdk::macros::tool;
+use std::fs;
 use tracing::info;
 
-#[tool(name = "edit_file", desc = "Make a precise string replacement in an existing file. Provide the file_path, the old_string to find, and the new_string to replace it with. The old_string must match exactly, including whitespace. Use replace_all=true to replace all occurrences.")]
+#[tool(
+    name = "edit_file",
+    desc = "Make a precise string replacement in an existing file. Provide the file_path, the old_string to find, and the new_string to replace it with. The old_string must match exactly, including whitespace. Use replace_all=true to replace all occurrences."
+)]
 pub fn edit_file(
     file_path: String,
     old_string: String,
@@ -17,8 +20,7 @@ pub fn edit_file(
     if !content.contains(&old_string) {
         return Err(format!(
             "old_string not found in {}.\n\nExpected to find:\n```\n{}\n```",
-            file_path,
-            old_string
+            file_path, old_string
         ));
     }
 

@@ -67,7 +67,9 @@ impl Agent {
     }
 
     pub async fn run(&mut self) -> Result<broadcast::Receiver<AgentEvent>> {
-        let runner = self.runner.take()
+        let runner = self
+            .runner
+            .take()
             .ok_or_else(|| crate::error::BimoError::Agent("Agent already consumed".to_string()))?;
 
         let (tx, rx) = broadcast::channel(256);
@@ -80,7 +82,9 @@ impl Agent {
         tokio::spawn(async move {
             info!("Starting agent session: {}", session_id);
             match runner.execute().await {
-                Ok(()) => { let _ = tx.send(AgentEvent::Done); }
+                Ok(()) => {
+                    let _ = tx.send(AgentEvent::Done);
+                }
                 Err(e) => {
                     let _ = tx.send(AgentEvent::Error(e));
                     let _ = tx.send(AgentEvent::Done);
@@ -101,12 +105,13 @@ impl Agent {
                 AgentEvent::ToolCallStart { tool_name, args } => {
                     output.push_str(&format!("\n[Tool: {tool_name}({args})]\n"));
                 }
-                AgentEvent::ToolCallEnd { tool_name: _, result } => {
-                    match result {
-                        Ok(r) => output.push_str(&format!("[Result: {r}]\n")),
-                        Err(e) => output.push_str(&format!("[Error: {e}]\n")),
-                    }
-                }
+                AgentEvent::ToolCallEnd {
+                    tool_name: _,
+                    result,
+                } => match result {
+                    Ok(r) => output.push_str(&format!("[Result: {r}]\n")),
+                    Err(e) => output.push_str(&format!("[Error: {e}]\n")),
+                },
                 AgentEvent::Done => break,
                 AgentEvent::Error(e) => {
                     output.push_str(&format!("\n[Error: {e}]\n"));
@@ -124,7 +129,8 @@ impl AgentRunner {
     async fn execute(self) -> std::result::Result<(), String> {
         let tools = crate::tools::all_tools();
 
-        let base_url = self.provider_base_url
+        let base_url = self
+            .provider_base_url
             .clone()
             .or_else(|| default_base_url(&self.provider_name).map(String::from))
             .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
@@ -137,7 +143,8 @@ impl AgentRunner {
             builder_cfg = builder_cfg.api_key(key.clone());
         }
 
-        let model = builder_cfg.build()
+        let model = builder_cfg
+            .build()
             .map_err(|e| format!("Failed to build provider: {e}"))?;
 
         let mut req_builder = aisdk::core::LanguageModelRequest::builder()
@@ -153,8 +160,7 @@ impl AgentRunner {
             .stop_when(aisdk::core::utils::step_count_is(self.max_steps))
             .build();
 
-        request.generate_text().await
-            .map_err(|e| e.to_string())?;
+        request.generate_text().await.map_err(|e| e.to_string())?;
 
         Ok(())
     }

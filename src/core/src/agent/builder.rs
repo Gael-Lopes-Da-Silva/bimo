@@ -1,11 +1,13 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 
+use crate::agent::Agent;
 use crate::agent::agent::AgentRunner;
 use crate::agent::instructions::load_instructions;
-use crate::agent::Agent;
 use crate::config::{ProviderConfig, Settings};
 use crate::error::Result;
 use crate::prompt::PromptEngine;
+use crate::tools;
 
 pub struct AgentBuilder {
     provider: Option<ProviderConfig>,
@@ -66,23 +68,19 @@ impl AgentBuilder {
     }
 
     pub fn build(self) -> Result<Agent> {
-        let provider = self.provider.ok_or_else(|| {
-            crate::error::BimoError::Config("No provider configured".to_string())
-        })?;
+        let provider = self
+            .provider
+            .ok_or_else(|| crate::error::BimoError::Config("No provider configured".to_string()))?;
 
-        let project_dir_str = self
-            .project_dir
-            .as_ref()
-            .and_then(|p| p.to_str());
+        let project_dir_str = self.project_dir.as_ref().and_then(|p| p.to_str());
 
         let instructions = load_instructions(project_dir_str);
 
-        let prompt_engine = PromptEngine::new(
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("prompts"),
-        );
+        let tools_desc = tools::describe_tools();
 
-        let system_prompt = prompt_engine.render_default(&std::collections::HashMap::from([
-            ("INSTRUCTIONS".to_string(), instructions),
+        let system_prompt = PromptEngine::render_system(&HashMap::from([
+            ("PROJECT_CONTEXT".to_string(), instructions),
+            ("TOOLS".to_string(), tools_desc),
         ]));
 
         let max_steps = self.max_steps.unwrap_or(self.settings.max_steps);

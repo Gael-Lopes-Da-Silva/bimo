@@ -1,15 +1,14 @@
-use std::process::Command;
-use std::time::Duration;
 use aisdk::core::tools::Tool;
 use aisdk::macros::tool;
+use std::process::Command;
+use std::time::Duration;
 use tracing::info;
 
-#[tool(name = "run_command", desc = "Execute a shell command in the workspace. Provide the command string and optionally a working directory (defaults to cwd) and timeout in seconds (defaults to 120). Use && to chain commands. Returns stdout and stderr.")]
-pub fn run_command(
-    command: String,
-    workdir: Option<String>,
-    timeout_secs: Option<u64>,
-) -> Tool {
+#[tool(
+    name = "run_command",
+    desc = "Execute a shell command in the workspace. Provide the command string and optionally a working directory (defaults to cwd) and timeout in seconds (defaults to 120). Use && to chain commands. Returns stdout and stderr."
+)]
+pub fn run_command(command: String, workdir: Option<String>, timeout_secs: Option<u64>) -> Tool {
     info!("Running command: {}", command);
     let timeout = Duration::from_secs(timeout_secs.unwrap_or(120));
 
@@ -22,8 +21,13 @@ pub fn run_command(
         .spawn()
         .map_err(|e| format!("Failed to execute command: {}", e))?;
 
-    let output = wait_with_timeout(child, timeout)
-        .map_err(|_| format!("Command timed out after {}s: {}", timeout.as_secs(), command))?;
+    let output = wait_with_timeout(child, timeout).map_err(|_| {
+        format!(
+            "Command timed out after {}s: {}",
+            timeout.as_secs(),
+            command
+        )
+    })?;
 
     let mut result = String::new();
 
@@ -51,7 +55,11 @@ pub fn run_command(
         if !stderr.is_empty() {
             result.push_str(&format!("stderr:\n```\n{}\n```\n", stderr.trim_end()));
         }
-        info!("Command failed (exit={:?}): {}", output.status.code(), command);
+        info!(
+            "Command failed (exit={:?}): {}",
+            output.status.code(),
+            command
+        );
         Err(result)
     }
 }
@@ -64,13 +72,13 @@ fn wait_with_timeout(
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
-                let output = child.wait_with_output().unwrap_or_else(|_| {
-                    std::process::Output {
+                let output = child
+                    .wait_with_output()
+                    .unwrap_or_else(|_| std::process::Output {
                         status,
                         stdout: Vec::new(),
                         stderr: Vec::new(),
-                    }
-                });
+                    });
                 return Ok(output);
             }
             Ok(None) => {

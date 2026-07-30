@@ -1,73 +1,44 @@
 mod template;
 
 use std::collections::HashMap;
-use std::path::PathBuf;
-use tracing::warn;
 
 pub use template::render_template;
 
-/// Loads and renders system prompt templates from the prompts/ directory.
+const SYSTEM_PROMPT: &str = include_str!("../prompts/SYSTEM.md");
+const SUMMARY_PROMPT: &str = include_str!("../prompts/SUMMARY.md");
+const COMPACT_PROMPT: &str = include_str!("../prompts/COMPACT.md");
+
+/// Loads and renders system prompt templates embedded at compile time.
 /// Templates use `{{PLACEHOLDER}}` notation for variable substitution.
-pub struct PromptEngine {
-    templates_dir: PathBuf,
-    cache: HashMap<String, String>,
-}
+pub struct PromptEngine;
 
 impl PromptEngine {
-    pub fn new(templates_dir: PathBuf) -> Self {
-        let mut engine = Self {
-            templates_dir,
-            cache: HashMap::new(),
-        };
-        engine.load_all();
-        engine
+    pub fn new() -> Self {
+        Self
     }
 
-    fn load_all(&mut self) {
-        if !self.templates_dir.is_dir() {
-            warn!("Prompts directory not found: {:?}", self.templates_dir);
-            return;
-        }
-
-        let entries = match std::fs::read_dir(&self.templates_dir) {
-            Ok(e) => e,
-            Err(_) => return,
-        };
-
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().is_some_and(|e| e == "md" || e == "txt" || e == "prompt") {
-                if let Ok(content) = std::fs::read_to_string(&path) {
-                    let name = path
-                        .file_stem()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("unknown")
-                        .to_string();
-                    self.cache.insert(name, content);
-                }
-            }
-        }
+    /// Get the SYSTEM prompt template.
+    pub fn system_template() -> &'static str {
+        SYSTEM_PROMPT
     }
 
-    /// Get a raw template by name (without extension).
-    pub fn get_template(&self, name: &str) -> Option<&str> {
-        self.cache.get(name).map(|s| s.as_str())
+    /// Get the SUMMARY prompt template.
+    pub fn summary_template() -> &'static str {
+        SUMMARY_PROMPT
     }
 
-    /// Render a named template with variables.
-    pub fn render(&self, name: &str, vars: &HashMap<String, String>) -> Option<String> {
-        let template = self.cache.get(name)?;
-        Some(render_template(template, vars))
+    /// Get the COMPACT prompt template.
+    pub fn compact_template() -> &'static str {
+        COMPACT_PROMPT
     }
 
-    /// Render the default system prompt with variables.
-    pub fn render_default(&self, vars: &HashMap<String, String>) -> String {
-        let os = std::env::consts::OS;
-        let shell = std::env::var("SHELL").unwrap_or_else(|_| "unknown".to_string());
-
+    /// Render the system prompt with all variables.
+    pub fn render_system(vars: &HashMap<String, String>) -> String {
         let mut default_vars = HashMap::new();
-        default_vars.insert("OS".to_string(), os.to_string());
-        default_vars.insert("SHELL".to_string(), shell);
+        default_vars.insert(
+            "DATE".to_string(),
+            chrono::Utc::now().date_naive().to_string(),
+        );
         default_vars.insert(
             "CWD".to_string(),
             std::env::current_dir()
@@ -83,8 +54,21 @@ impl PromptEngine {
             default_vars.insert(k.clone(), v.clone());
         }
 
-        self.render("system_default", &default_vars)
-            .unwrap_or_else(|| "You are Bimo, an AI coding agent.".to_string())
+        render_template(SYSTEM_PROMPT, &default_vars)
+    }
+
+    /// Render the SUMMARY template.
+    pub fn render_summary(summary: &str) -> String {
+        let mut vars = HashMap::new();
+        vars.insert("SUMMARY".to_string(), summary.to_string());
+        render_template(SUMMARY_PROMPT, &vars)
+    }
+
+    /// Render the COMPACT template.
+    pub fn render_compact(conversation: &str) -> String {
+        let mut vars = HashMap::new();
+        vars.insert("CONVERSATION".to_string(), conversation.to_string());
+        render_template(COMPACT_PROMPT, &vars)
     }
 
     fn detect_project_language() -> String {
@@ -106,5 +90,11 @@ impl PromptEngine {
         } else {
             "Unknown".to_string()
         }
+    }
+}
+
+impl Default for PromptEngine {
+    fn default() -> Self {
+        Self::new()
     }
 }

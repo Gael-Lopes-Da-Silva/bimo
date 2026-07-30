@@ -2,6 +2,8 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum BimoError {
+    #[error("{0}")]
+    Msg(String),
     #[error("Configuration error: {0}")]
     Config(String),
 

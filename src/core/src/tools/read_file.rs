@@ -1,14 +1,13 @@
-use std::fs;
 use aisdk::core::tools::Tool;
 use aisdk::macros::tool;
+use std::fs;
 use tracing::info;
 
-#[tool(name = "read_file", desc = "Read the contents of a file. Optionally specify start_line and end_line (1-indexed) to read a range. Leave both None to read the entire file.")]
-pub fn read_file(
-    file_path: String,
-    start_line: Option<usize>,
-    end_line: Option<usize>,
-) -> Tool {
+#[tool(
+    name = "read_file",
+    desc = "Read the contents of a file. Optionally specify start_line and end_line (1-indexed) to read a range. Leave both None to read the entire file."
+)]
+pub fn read_file(file_path: String, start_line: Option<usize>, end_line: Option<usize>) -> Tool {
     info!("Reading file: {}", file_path);
     let content = fs::read_to_string(&file_path)
         .map_err(|e| format!("Failed to read {}: {}", file_path, e))?;
@@ -23,13 +22,19 @@ pub fn read_file(
             if start >= total_lines || start >= end {
                 return Err(format!(
                     "Invalid range: {}-{} (file has {total_lines} lines)",
-                    start + 1, end
+                    start + 1,
+                    end
                 ));
             }
             let selected = lines[start..end].join("\n");
             Ok(format!(
                 "```\n{}:{}\n{}\n```\n(Lines {}-{} of {})",
-                file_path, start + 1, selected, start + 1, end, total_lines
+                file_path,
+                start + 1,
+                selected,
+                start + 1,
+                end,
+                total_lines
             ))
         }
         (Some(start), None) => {
@@ -43,7 +48,12 @@ pub fn read_file(
             let selected = lines[start..].join("\n");
             Ok(format!(
                 "```\n{}:{}\n{}\n```\n(Lines {}-{} of {})",
-                file_path, start + 1, selected, start + 1, total_lines, total_lines
+                file_path,
+                start + 1,
+                selected,
+                start + 1,
+                total_lines,
+                total_lines
             ))
         }
         (None, Some(end)) => {
@@ -54,11 +64,9 @@ pub fn read_file(
                 file_path, 1, selected, end, total_lines
             ))
         }
-        (None, None) => {
-            Ok(format!(
-                "```\n{}\n{}\n```\n({} lines)",
-                file_path, content, total_lines
-            ))
-        }
+        (None, None) => Ok(format!(
+            "```\n{}\n{}\n```\n({} lines)",
+            file_path, content, total_lines
+        )),
     }
 }

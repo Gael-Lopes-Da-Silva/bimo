@@ -52,8 +52,7 @@ impl Default for Settings {
 
 impl Settings {
     pub fn path() -> std::path::PathBuf {
-        let base = dirs::config_dir()
-            .unwrap_or_else(|| std::path::PathBuf::from("~/.config"));
+        let base = dirs::config_dir().unwrap_or_else(|| std::path::PathBuf::from("~/.config"));
         base.join("bimo").join("settings.json")
     }
 

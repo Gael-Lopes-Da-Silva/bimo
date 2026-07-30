@@ -48,8 +48,7 @@ impl Session {
     }
 
     pub fn sessions_dir() -> std::path::PathBuf {
-        let base = dirs::config_dir()
-            .unwrap_or_else(|| std::path::PathBuf::from("~/.config"));
+        let base = dirs::config_dir().unwrap_or_else(|| std::path::PathBuf::from("~/.config"));
         base.join("bimo").join("sessions")
     }
 

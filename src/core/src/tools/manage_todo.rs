@@ -77,10 +77,26 @@ impl TodoList {
 
     pub fn summary(&self) -> String {
         let total = self.items.len();
-        let pending = self.items.iter().filter(|i| i.status == TodoStatus::Pending).count();
-        let in_progress = self.items.iter().filter(|i| i.status == TodoStatus::InProgress).count();
-        let completed = self.items.iter().filter(|i| i.status == TodoStatus::Completed).count();
-        let cancelled = self.items.iter().filter(|i| i.status == TodoStatus::Cancelled).count();
+        let pending = self
+            .items
+            .iter()
+            .filter(|i| i.status == TodoStatus::Pending)
+            .count();
+        let in_progress = self
+            .items
+            .iter()
+            .filter(|i| i.status == TodoStatus::InProgress)
+            .count();
+        let completed = self
+            .items
+            .iter()
+            .filter(|i| i.status == TodoStatus::Completed)
+            .count();
+        let cancelled = self
+            .items
+            .iter()
+            .filter(|i| i.status == TodoStatus::Cancelled)
+            .count();
 
         format!(
             "Todo: {total} total ({pending} pending, {in_progress} in progress, {completed} completed, {cancelled} cancelled)"
@@ -126,10 +142,13 @@ pub fn new_shared_todolist() -> SharedTodoList {
     Arc::new(Mutex::new(TodoList::new()))
 }
 
-use aisdk::macros::tool;
 use aisdk::core::tools::Tool;
+use aisdk::macros::tool;
 
-#[tool(name = "manage_todo", desc = "Manage a task list. Actions: add, update, remove, list. When adding, provide a description and priority (high/medium/low). When updating, provide the item id and new status (pending/in_progress/completed/cancelled).")]
+#[tool(
+    name = "manage_todo",
+    desc = "Manage a task list. Actions: add, update, remove, list. When adding, provide a description and priority (high/medium/low). When updating, provide the item id and new status (pending/in_progress/completed/cancelled)."
+)]
 pub fn manage_todo(
     action: String,
     description: Option<String>,
@@ -182,9 +201,7 @@ pub fn manage_todo(
                 Err(format!("Todo item {item_id} not found"))
             }
         }
-        "list" => {
-            Ok(list.format())
-        }
+        "list" => Ok(list.format()),
         other => Err(format!("unknown action: {other}")),
     }
 }
