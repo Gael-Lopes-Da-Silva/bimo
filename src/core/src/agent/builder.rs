@@ -1,3 +1,5 @@
+//! Builder for constructing a configured [`Agent`].
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -10,6 +12,10 @@ use crate::error::Result;
 use crate::prompt::PromptEngine;
 use crate::tools;
 
+/// Builder-pattern constructor for [`Agent`].
+///
+/// At minimum a provider and a user prompt must be supplied before calling
+/// [`build`](Self::build).
 pub struct AgentBuilder {
     provider: Option<Provider>,
     model: Option<String>,
@@ -23,6 +29,7 @@ pub struct AgentBuilder {
 }
 
 impl AgentBuilder {
+    /// Creates a new builder with default settings.
     pub fn new() -> Self {
         Self {
             provider: None,
@@ -37,51 +44,67 @@ impl AgentBuilder {
         }
     }
 
+    /// Sets the provider to use.
     pub fn with_provider(mut self, provider: Provider) -> Self {
         self.provider = Some(provider);
         self
     }
 
+    /// Sets the model string (e.g. `"claude-sonnet-4-20250514"`).
+    ///
+    /// Defaults to the provider's id when not specified.
     pub fn with_model(mut self, model: String) -> Self {
         self.model = Some(model);
         self
     }
 
+    /// Overrides the default settings.
     pub fn with_settings(mut self, settings: Settings) -> Self {
         self.settings = settings;
         self
     }
 
+    /// Sets the project root directory for instruction loading.
     pub fn with_project_dir(mut self, dir: PathBuf) -> Self {
         self.project_dir = Some(dir);
         self
     }
 
+    /// Attaches an existing session to resume.
     pub fn with_session(mut self, session: crate::session::Session) -> Self {
         self.session = Some(session);
         self
     }
 
+    /// Sets the maximum number of tool-call steps.
     pub fn with_max_steps(mut self, steps: usize) -> Self {
         self.max_steps = Some(steps);
         self
     }
 
+    /// Sets the model temperature.
     pub fn with_temperature(mut self, temp: f32) -> Self {
         self.temperature = Some(temp);
         self
     }
 
+    /// Sets the maximum output tokens.
     pub fn with_max_tokens(mut self, tokens: u32) -> Self {
         self.max_tokens = Some(tokens);
         self
     }
 
+    /// Sets the user prompt — required before calling [`build`](Self::build).
     pub fn with_user_prompt(mut self, prompt: String) -> Self {
         self.user_prompt = Some(prompt);
         self
     }
 
+    /// Consumes the builder and produces an [`Agent`].
+    ///
+    /// # Errors
+    ///
+    /// Returns a `BimoError::Config` if no provider or user prompt was set.
     pub fn build(self) -> Result<Agent> {
         let provider = self
             .provider

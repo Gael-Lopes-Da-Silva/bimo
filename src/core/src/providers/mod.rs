@@ -1,3 +1,5 @@
+//! Provider resolution — built-in locals, cloud registries, model discovery.
+
 mod registry;
 pub mod types;
 

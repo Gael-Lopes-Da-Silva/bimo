@@ -1,3 +1,8 @@
+//! Core library for the Bimo AI coding agent harness.
+//!
+//! Provides configuration, provider/model registries, agent execution,
+//! tool definitions, prompt rendering, and session management.
+
 pub mod agent;
 pub mod config;
 pub mod error;

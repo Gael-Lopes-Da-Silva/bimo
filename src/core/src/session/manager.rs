@@ -1,3 +1,5 @@
+//! Session lifecycle manager — in-memory cache, persistence, periodic cleanup.
+
 use std::cmp::Reverse;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -8,6 +10,10 @@ use tracing::{info, warn};
 use super::Session;
 use crate::config::Settings;
 
+/// Manages session lifecycle: creation, retrieval, persistence, and cleanup.
+///
+/// Sessions are held in memory and periodically persisted to disk.  Expired
+/// sessions are removed by a background task.
 pub struct SessionManager {
     sessions: Arc<RwLock<HashMap<String, Session>>>,
     settings: Settings,
@@ -15,6 +21,8 @@ pub struct SessionManager {
 }
 
 impl SessionManager {
+    /// Creates a new manager, loads existing sessions from disk, and starts
+    /// the background cleanup task.
     pub async fn new(settings: Settings) -> crate::Result<Self> {
         let manager = Self {
             sessions: Arc::new(RwLock::new(HashMap::new())),
@@ -83,7 +91,6 @@ impl SessionManager {
     ) {
         let mut map = sessions.write().await;
 
-        // Remove expired sessions
         let expired_ids: Vec<String> = map
             .iter()
             .filter(|(_, s)| s.is_expired(ttl_hours))
@@ -100,7 +107,6 @@ impl SessionManager {
             }
         }
 
-        // Enforce max sessions (oldest first)
         if map.len() > max_sessions {
             let mut sessions_sorted: Vec<(String, Session)> = map.drain().collect();
             sessions_sorted.sort_by_key(|(_, s)| Reverse(s.updated_at));
@@ -119,6 +125,7 @@ impl SessionManager {
         }
     }
 
+    /// Creates a new session, persists it, and returns it.
     pub async fn create(&self) -> Session {
         let session = Session::new();
         let mut map = self.sessions.write().await;
@@ -132,11 +139,13 @@ impl SessionManager {
         session
     }
 
+    /// Retrieves a session by id.
     pub async fn get(&self, id: &str) -> Option<Session> {
         let map = self.sessions.read().await;
         map.get(id).cloned()
     }
 
+    /// Updates and persists a session.
     pub async fn update(&self, session: &Session) -> crate::Result<()> {
         let mut map = self.sessions.write().await;
         map.insert(session.id.clone(), session.clone());
@@ -144,6 +153,7 @@ impl SessionManager {
         Ok(())
     }
 
+    /// Deletes a session by id.
     pub async fn delete(&self, id: &str) -> crate::Result<()> {
         let mut map = self.sessions.write().await;
         if let Some(session) = map.remove(id) {
@@ -152,6 +162,7 @@ impl SessionManager {
         Ok(())
     }
 
+    /// Lists all sessions, most recently updated first.
     pub async fn list(&self) -> Vec<Session> {
         let map = self.sessions.read().await;
         let mut sessions: Vec<Session> = map.values().cloned().collect();
@@ -159,6 +170,7 @@ impl SessionManager {
         sessions
     }
 
+    /// Runs the cleanup logic immediately (used for testing).
     pub async fn run_cleanup_now(&self) {
         let ttl = self.settings.session_ttl_hours;
         let max = self.settings.max_sessions;

@@ -1,5 +1,8 @@
+//! Provider configuration — types and persistence for `providers.json`.
+
 use serde::{Deserialize, Serialize};
 
+/// Whether a provider runs locally or is a cloud service.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderType {
@@ -7,6 +10,10 @@ pub enum ProviderType {
     Cloud,
 }
 
+/// API format expected by a provider's endpoint.
+///
+/// Maps from the `npm` field in models.dev entries (e.g. `@ai-sdk/anthropic`)
+/// or the user's `api_format` override in `providers.json`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ApiFormat {
@@ -17,6 +24,11 @@ pub enum ApiFormat {
     Other(String),
 }
 
+/// A configured provider (local or cloud).
+///
+/// Serialized as an entry in `providers.json`.  For cloud providers the user
+/// supplies the `api_key`; the `base_url` may be filled automatically from
+/// the models.dev registry if left empty.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Provider {
     pub id: String,
@@ -33,6 +45,7 @@ pub struct Provider {
 }
 
 impl Provider {
+    /// Creates a local provider with the given identity and base URL.
     pub fn local(id: &str, name: &str, base_url: &str) -> Self {
         Self {
             id: id.to_string(),
@@ -45,6 +58,7 @@ impl Provider {
         }
     }
 
+    /// Creates a cloud provider with the given identity and base URL.
     pub fn cloud(id: &str, name: &str, base_url: &str) -> Self {
         Self {
             id: id.to_string(),
@@ -57,14 +71,17 @@ impl Provider {
         }
     }
 
+    /// Returns `true` if this provider runs locally.
     pub fn is_local(&self) -> bool {
         matches!(self.provider_type, ProviderType::Local)
     }
 
+    /// Returns `true` if this provider is a cloud service.
     pub fn is_cloud(&self) -> bool {
         matches!(self.provider_type, ProviderType::Cloud)
     }
 
+    /// Returns the API format, defaulting to `OpenAICompatible` when unset.
     pub fn effective_api_format(&self) -> ApiFormat {
         self.api_format
             .clone()
@@ -72,6 +89,9 @@ impl Provider {
     }
 }
 
+/// The user's `providers.json` file.
+///
+/// Lists configured providers and optionally names a default.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProvidersFile {
     #[serde(default)]
@@ -81,11 +101,13 @@ pub struct ProvidersFile {
 }
 
 impl ProvidersFile {
+    /// Returns the path to `providers.json` inside `~/.config/bimo/`.
     pub fn path() -> std::path::PathBuf {
         let base = dirs::config_dir().unwrap_or_else(|| std::path::PathBuf::from("~/.config"));
         base.join("bimo").join("providers.json")
     }
 
+    /// Loads providers from disk, returning an empty file if the path does not exist.
     pub fn load() -> crate::Result<Self> {
         let path = Self::path();
         if !path.exists() {
@@ -98,6 +120,7 @@ impl ProvidersFile {
         Ok(serde_json::from_str(&content)?)
     }
 
+    /// Saves providers to `providers.json`, creating parent directories as needed.
     pub fn save(&self) -> crate::Result<()> {
         let path = Self::path();
         if let Some(parent) = path.parent() {
@@ -108,19 +131,23 @@ impl ProvidersFile {
         Ok(())
     }
 
+    /// Returns the provider marked as default, if any.
     pub fn default_provider(&self) -> Option<&Provider> {
         let default_id = self.default.as_deref()?;
         self.providers.iter().find(|p| p.id == default_id)
     }
 
+    /// Returns all local providers in the configuration.
     pub fn local_providers(&self) -> Vec<&Provider> {
         self.providers.iter().filter(|p| p.is_local()).collect()
     }
 
+    /// Returns all cloud providers in the configuration.
     pub fn cloud_providers(&self) -> Vec<&Provider> {
         self.providers.iter().filter(|p| p.is_cloud()).collect()
     }
 
+    /// Looks up a provider by id or name (case-insensitive).
     pub fn find(&self, id_or_name: &str) -> Option<&Provider> {
         let lower = id_or_name.to_lowercase();
         self.providers

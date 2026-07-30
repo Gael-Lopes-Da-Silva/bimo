@@ -1,3 +1,5 @@
+//! Provider registry — fetches and caches the models.dev provider catalogue.
+
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -10,6 +12,10 @@ use crate::error::{BimoError, Result};
 
 const MODELS_DEV_URL: &str = "https://models.dev/api.json";
 
+/// Thread-safe registry of providers from models.dev.
+///
+/// Data is fetched from the remote API on first load and cached to
+/// `~/.config/bimo/models_cache.json` so it remains available offline.
 #[derive(Debug, Clone)]
 pub struct ProviderRegistry {
     providers: Arc<RwLock<ProviderMap>>,
@@ -17,6 +23,9 @@ pub struct ProviderRegistry {
 }
 
 impl ProviderRegistry {
+    /// Creates a new empty registry.
+    ///
+    /// Call [`load`](Self::load) or [`refresh`](Self::refresh) to populate it.
     pub fn new() -> Self {
         let base = dirs::config_dir().unwrap_or_else(|| PathBuf::from("~/.config"));
         Self {
@@ -25,6 +34,7 @@ impl ProviderRegistry {
         }
     }
 
+    /// Attempts to fetch from models.dev; falls back to the local cache on failure.
     pub async fn load(&self) -> Result<()> {
         match self.fetch_remote().await {
             Ok(providers) => {
@@ -40,6 +50,7 @@ impl ProviderRegistry {
         Ok(())
     }
 
+    /// Forces a fresh fetch from models.dev and updates the local cache.
     pub async fn refresh(&self) -> Result<()> {
         let providers = self.fetch_remote().await.map_err(BimoError::Msg)?;
         let mut map = self.providers.write().await;
@@ -92,6 +103,9 @@ impl ProviderRegistry {
         Ok(())
     }
 
+    /// Returns all providers from the registry as [`Provider`] instances.
+    ///
+    /// The returned providers have no API key set (the caller must supply it).
     pub async fn builtin_cloud_providers(&self) -> Vec<Provider> {
         let map = self.providers.read().await;
         let mut providers: Vec<Provider> = map.values().map(|e| e.to_provider()).collect();
@@ -99,6 +113,7 @@ impl ProviderRegistry {
         providers
     }
 
+    /// Returns every provider entry from the registry, sorted by name.
     pub async fn list_providers(&self) -> Vec<ProviderEntry> {
         let map = self.providers.read().await;
         let mut providers: Vec<ProviderEntry> = map.values().cloned().collect();
@@ -106,6 +121,7 @@ impl ProviderRegistry {
         providers
     }
 
+    /// Looks up a provider by id (exact) or name (case-insensitive).
     pub async fn find_provider(&self, id_or_name: &str) -> Option<ProviderEntry> {
         let map = self.providers.read().await;
         let lower = id_or_name.to_lowercase();
@@ -116,11 +132,13 @@ impl ProviderRegistry {
         })
     }
 
+    /// Returns the base URL for a given provider id, if known.
     pub async fn provider_base_url(&self, provider_id: &str) -> Option<String> {
         let map = self.providers.read().await;
         map.get(provider_id).and_then(|p| p.base_url())
     }
 
+    /// Returns the environment variable names required by a provider.
     pub async fn provider_env_vars(&self, provider_id: &str) -> Vec<String> {
         let map = self.providers.read().await;
         map.get(provider_id)
@@ -128,15 +146,18 @@ impl ProviderRegistry {
             .unwrap_or_default()
     }
 
+    /// Returns the API format for a provider, if known.
     pub async fn provider_api_format(&self, provider_id: &str) -> Option<ApiFormat> {
         let map = self.providers.read().await;
         map.get(provider_id).map(|p| p.api_format())
     }
 
+    /// Returns a reference to the inner provider map for sharing with `ModelRegistry`.
     pub fn providers_ref(&self) -> &Arc<RwLock<ProviderMap>> {
         &self.providers
     }
 
+    /// Number of providers currently in the registry.
     pub async fn provider_count(&self) -> usize {
         let map = self.providers.read().await;
         map.len()

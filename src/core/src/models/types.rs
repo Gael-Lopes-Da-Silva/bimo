@@ -1,9 +1,13 @@
+//! Model metadata types from the models.dev API.
+
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+/// Map of model id → [`ModelEntry`] for a given provider.
 pub type ModelMap = HashMap<String, ModelEntry>;
 
+/// Metadata about a single model from the models.dev API.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelEntry {
     pub id: String,
@@ -42,6 +46,7 @@ pub struct ModelEntry {
     pub last_updated: Option<String>,
 }
 
+/// Supported input and output types for a model (e.g. text, image).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelModalities {
     #[serde(default)]
@@ -50,6 +55,7 @@ pub struct ModelModalities {
     pub output: Vec<String>,
 }
 
+/// Context window and output token limits.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelLimit {
     #[serde(default)]
@@ -58,6 +64,7 @@ pub struct ModelLimit {
     pub output: Option<u64>,
 }
 
+/// Pricing per token (input, output, cache tiers).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelCost {
     #[serde(default)]
@@ -70,6 +77,7 @@ pub struct ModelCost {
     pub cache_write: Option<f64>,
 }
 
+/// A reasoning budget option available for this model.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReasoningOption {
     #[serde(rename = "type")]

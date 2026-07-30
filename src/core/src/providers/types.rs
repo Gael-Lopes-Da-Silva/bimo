@@ -1,3 +1,5 @@
+//! Registry data types — entries and maps from the models.dev API.
+
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
@@ -5,8 +7,13 @@ use serde::{Deserialize, Serialize};
 use crate::config::{ApiFormat, Provider};
 use crate::models::ModelEntry;
 
+/// Map of provider id → [`ProviderEntry`] from the models.dev registry.
 pub type ProviderMap = HashMap<String, ProviderEntry>;
 
+/// A single provider entry from the models.dev API.
+///
+/// Each entry describes a known AI provider: its base URL, SDK package,
+/// environment variables, and available models.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderEntry {
     pub id: String,
@@ -23,6 +30,7 @@ pub struct ProviderEntry {
 }
 
 impl ProviderEntry {
+    /// Returns the base URL from the `api` field, if it is a string.
     pub fn base_url(&self) -> Option<String> {
         self.api.as_ref().and_then(|v| match v {
             serde_json::Value::String(s) => Some(s.clone()),
@@ -30,6 +38,7 @@ impl ProviderEntry {
         })
     }
 
+    /// Derives the [`ApiFormat`] from this entry's `npm` field.
     pub fn api_format(&self) -> ApiFormat {
         match self.npm.as_deref() {
             Some("@ai-sdk/openai-compatible") => ApiFormat::OpenAICompatible,
@@ -41,6 +50,8 @@ impl ProviderEntry {
         }
     }
 
+    /// Converts this registry entry into a [`Provider`] consumable by the
+    /// agent builder.  The returned provider has no API key set.
     pub fn to_provider(&self) -> Provider {
         let mut p = Provider::cloud(&self.id, &self.name, &self.base_url().unwrap_or_default());
         p.api_format = Some(self.api_format());

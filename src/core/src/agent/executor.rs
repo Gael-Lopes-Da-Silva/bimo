@@ -1,3 +1,5 @@
+//! Agent execution — model dispatching, streaming, event emission.
+
 use aisdk::core::capabilities::{TextInputSupport, ToolCallSupport};
 use aisdk::core::{DynamicModel, LanguageModel, LanguageModelStreamChunkType};
 use aisdk::providers::{Anthropic, OpenAICompatible};
@@ -13,22 +15,30 @@ use crate::tools;
 type OpenAIModel = OpenAICompatible<DynamicModel>;
 type AnthropicModel = Anthropic<DynamicModel>;
 
+/// Events emitted by the agent during a streaming run.
 #[derive(Debug, Clone)]
 pub enum AgentEvent {
+    /// A text delta from the model.
     TextDelta(String),
+    /// A reasoning/thinking delta from the model.
     ReasoningDelta(String),
+    /// A tool call has started.
     ToolCallStart {
         tool_name: String,
         args: serde_json::Value,
     },
+    /// A tool call has completed.
     ToolCallEnd {
         tool_name: String,
         result: std::result::Result<String, String>,
     },
+    /// An error occurred.
     Error(String),
+    /// The agent run finished.
     Done,
 }
 
+/// An agent ready to run.
 pub struct Agent {
     pub(crate) runner: Option<AgentRunner>,
     pub session: Session,
@@ -222,10 +232,14 @@ async fn execute_model_stream<M: LanguageModel + TextInputSupport + ToolCallSupp
 }
 
 impl Agent {
+    /// Creates a new `AgentBuilder`.
     pub fn builder() -> super::AgentBuilder {
         super::AgentBuilder::new()
     }
 
+    /// Runs the agent and returns a channel receiver for [`AgentEvent`]s.
+    ///
+    /// The agent is consumed (may only be run once).
     pub async fn run(&mut self) -> Result<broadcast::Receiver<AgentEvent>> {
         let runner = self
             .runner
@@ -255,6 +269,9 @@ impl Agent {
         Ok(rx)
     }
 
+    /// Runs the agent with streaming and returns a channel receiver.
+    ///
+    /// The agent is consumed (may only be run once).
     pub async fn run_stream(&mut self) -> Result<broadcast::Receiver<AgentEvent>> {
         let runner = self
             .runner
@@ -276,6 +293,9 @@ impl Agent {
         Ok(rx)
     }
 
+    /// Runs the agent and collects the output as a plain string.
+    ///
+    /// The agent is consumed (may only be run once).
     pub async fn run_text(&mut self) -> Result<String> {
         let mut rx = self.run().await?;
         let mut output = String::new();

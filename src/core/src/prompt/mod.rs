@@ -1,3 +1,5 @@
+//! Prompt template rendering — embeds and renders system prompts at compile time.
+
 use std::collections::HashMap;
 
 const SYSTEM_PROMPT: &str = include_str!("prompts/SYSTEM.md");

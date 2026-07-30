@@ -1,3 +1,5 @@
+//! Built-in tool definitions for the agent.
+
 mod edit_file;
 pub mod manage_todo;
 mod read_file;
@@ -16,6 +18,7 @@ pub use write_file::write_file;
 
 use aisdk::core::tools::Tool;
 
+/// Returns all available tools as a [`Vec<Tool>`] for the agent.
 pub fn all_tools() -> Vec<Tool> {
     vec![
         read_file(),
