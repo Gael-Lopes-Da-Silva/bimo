@@ -25,6 +25,10 @@ pub struct ProviderInfo {
     pub requires_api_key: bool,
     pub default_base_url: String,
     pub builtin: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub doc_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub env_vars: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -37,7 +41,6 @@ pub struct ProviderRuntime {
     pub auth_header: Option<String>,
     pub auth_prefix: Option<String>,
     pub request_body_format: RequestBodyFormat,
-    pub free_models: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

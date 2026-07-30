@@ -6,7 +6,7 @@ pub use http::{
     build_request_body, chat_completion_streaming, extract_stream_delta, fetch_models,
     parse_chat_response,
 };
-pub use registry::{ProviderRegistry, builtin_providers};
+pub use registry::ProviderRegistry;
 pub use types::{
     ChatCompletionResponse, ChatMessage, ProviderCategory, ProviderInfo, ProviderRuntime, RawModel,
     RequestBodyFormat, UsageInfo,

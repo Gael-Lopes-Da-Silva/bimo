@@ -53,10 +53,10 @@ pub struct CoreAgent {
 }
 
 impl CoreAgent {
-    pub fn new() -> Self {
+    pub async fn new() -> Self {
         let settings = Settings::load();
         let providers_config = ProvidersConfig::load();
-        let provider_registry = ProviderRegistry::new();
+        let provider_registry = ProviderRegistry::new().await;
         let tool_registry = default_tools();
         let mut session = Session::new();
 
@@ -137,7 +137,11 @@ impl CoreAgent {
             .as_ref()
             .ok_or_else(|| BimoError::Provider("no provider selected".into()))?;
 
-        let models = crate::model::fetch_models_for_provider(runtime).await?;
+        let models = crate::model::fetch_models_for_provider(
+            runtime,
+            self.provider_registry.models_dev.as_ref(),
+        )
+        .await?;
         self.available_models = models.clone();
         Ok(models)
     }
@@ -304,6 +308,6 @@ impl CoreAgent {
 
 impl Default for CoreAgent {
     fn default() -> Self {
-        Self::new()
+        panic!("CoreAgent::default() is not supported; use CoreAgent::new().await instead")
     }
 }
