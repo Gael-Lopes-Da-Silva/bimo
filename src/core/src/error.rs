@@ -7,34 +7,25 @@ use thiserror::Error;
 pub enum BimoError {
     #[error("{0}")]
     Msg(String),
-    #[error("Configuration error: {0}")]
+    #[error("configuration error: {0}")]
     Config(String),
-
-    #[error("Session error: {0}")]
+    #[error("session error: {0}")]
     Session(String),
-
-    #[error("Agent error: {0}")]
+    #[error("agent error: {0}")]
     Agent(String),
-
-    #[error("Tool error: {0}")]
+    #[error("tool error: {0}")]
     Tool(String),
-
-    #[error("Prompt error: {0}")]
+    #[error("prompt error: {0}")]
     Prompt(String),
-
-    #[error("IO error: {0}")]
+    #[error("i/o error: {0}")]
     Io(#[from] std::io::Error),
-
-    #[error("Serialization error: {0}")]
+    #[error("serialization error: {0}")]
     Serde(#[from] serde_json::Error),
-
-    #[error("YAML deserialization error: {0}")]
+    #[error("yaml error: {0}")]
     SerdeYaml(#[from] serde_yaml::Error),
-
-    #[error("AI provider error: {0}")]
+    #[error("provider error: {0}")]
     Provider(String),
-
-    #[error("{0}")]
+    #[error("error: {0}")]
     Other(String),
 }
 
