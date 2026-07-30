@@ -23,6 +23,6 @@ pub use providers::{
     resolve_from_registry, resolve_provider,
 };
 pub use session::{Message, Session, SessionManager};
-pub use skill::Skill;
+pub use skill::{Skill, disable_skill, enable_skill, filter_enabled};
 pub use tools::{TodoItem, TodoList, TodoPriority, TodoStatus};
 pub use tools::{edit_file, manage_todo, read_file, run_command, write_file};

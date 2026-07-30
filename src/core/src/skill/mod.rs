@@ -11,6 +11,9 @@ pub struct Skill {
     pub name: String,
     /// One-line description from frontmatter.
     pub description: String,
+    /// Whether the skill is active.  Set via frontmatter `enabled:` or
+    /// toggled at runtime with [`enable_skill`] / [`disable_skill`].
+    pub enabled: bool,
     /// Instruction body — everything after the frontmatter block in `SKILL.md`.
     pub content: String,
     /// Absolute path to the skill directory (for resolving relative references).
@@ -24,6 +27,12 @@ struct SkillMeta {
     name: String,
     #[serde(default)]
     description: String,
+    #[serde(default = "default_enabled")]
+    enabled: bool,
+}
+
+fn default_enabled() -> bool {
+    true
 }
 
 /// Scans the given base directories for skill directories containing `SKILL.md`.
@@ -78,6 +87,7 @@ pub fn load_skills(base_dirs: &[PathBuf]) -> Vec<Skill> {
                 id,
                 name,
                 description: meta.description,
+                enabled: meta.enabled,
                 content: body,
                 path,
             });
@@ -102,16 +112,46 @@ fn parse_frontmatter(content: &str) -> Option<(String, String)> {
     Some((frontmatter, body))
 }
 
-/// Formats a list of skills as compact bullet entries for prompt injection.
+/// Returns only the enabled skills from the slice.
+pub fn filter_enabled(skills: &[Skill]) -> Vec<&Skill> {
+    skills.iter().filter(|s| s.enabled).collect()
+}
+
+/// Sets `skill.enabled = true` for the skill with the given `id`.
 ///
-/// Returns an empty string when `skills` is empty, so the `{{SKILLS}}`
-/// placeholder renders as nothing when no skills are configured.
-pub fn render_skills(skills: &[Skill]) -> String {
-    if skills.is_empty() {
-        return String::new();
+/// Returns `true` if a matching skill was found.
+pub fn enable_skill(skills: &mut [Skill], id: &str) -> bool {
+    if let Some(s) = skills.iter_mut().find(|s| s.id == id) {
+        s.enabled = true;
+        true
+    } else {
+        false
     }
+}
+
+/// Sets `skill.enabled = false` for the skill with the given `id`.
+///
+/// Returns `true` if a matching skill was found.
+pub fn disable_skill(skills: &mut [Skill], id: &str) -> bool {
+    if let Some(s) = skills.iter_mut().find(|s| s.id == id) {
+        s.enabled = false;
+        true
+    } else {
+        false
+    }
+}
+
+/// Formats enabled skills as compact bullet entries for prompt injection.
+///
+/// Skills with `enabled: false` are silently skipped.  Returns an empty
+/// string when no skills are active, so the `{{SKILLS}}` placeholder
+/// renders as nothing when no skills are loaded or all are disabled.
+pub fn render_skills(skills: &[Skill]) -> String {
     let mut out = String::new();
     for skill in skills {
+        if !skill.enabled {
+            continue;
+        }
         out.push_str(&format!("- **{}**: {}\n", skill.name, skill.description));
     }
     out
