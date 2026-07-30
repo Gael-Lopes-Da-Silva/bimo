@@ -6,6 +6,10 @@ Available tools:
 
 {{TOOLS}}
 
+Available skills:
+
+{{SKILLS}}
+
 Guidelines:
 
 - Be concise and practical.

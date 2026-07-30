@@ -10,6 +10,7 @@ pub mod models;
 pub mod prompt;
 pub mod providers;
 pub mod session;
+pub mod skill;
 pub mod tools;
 
 pub use agent::{Agent, AgentBuilder, AgentEvent};
@@ -22,5 +23,6 @@ pub use providers::{
     resolve_from_registry, resolve_provider,
 };
 pub use session::{Message, Session, SessionManager};
+pub use skill::Skill;
 pub use tools::{TodoItem, TodoList, TodoPriority, TodoStatus};
 pub use tools::{edit_file, manage_todo, read_file, run_command, write_file};
