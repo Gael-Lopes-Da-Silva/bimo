@@ -405,6 +405,16 @@ impl Agent {
         self.session
             .add_user_message_with_tokens(user_message, estimated_tokens);
 
+        /// Helper: send an event and abort the loop if the receiver is gone.
+        macro_rules! send_or_cancel {
+            ($tx:expr, $event:expr) => {
+                if $tx.send($event).await.is_err() {
+                    tracing::info!("chat_stream cancelled (receiver dropped)");
+                    return Ok(());
+                }
+            };
+        }
+
         for iteration in 0..=MAX_TOOL_ITERATIONS {
             let messages = self.session.to_chat_messages();
             let mut stream = Box::pin(
@@ -426,11 +436,12 @@ impl Agent {
                             provider::extract_stream_delta(&chunk, &runtime.request_body_format)
                         {
                             content.push_str(&delta);
-                            let _ = tx
-                                .send(ChatStreamEvent::Content {
+                            send_or_cancel!(
+                                tx,
+                                ChatStreamEvent::Content {
                                     delta: delta.clone(),
-                                })
-                                .await;
+                                }
+                            );
                         }
                     }
                     Err(e) => {
@@ -461,13 +472,14 @@ impl Agent {
                     total_tool_calls = iteration,
                     "chat_stream done"
                 );
-                let _ = tx
-                    .send(ChatStreamEvent::Done {
+                send_or_cancel!(
+                    tx,
+                    ChatStreamEvent::Done {
                         model: Some(model),
                         usage: None,
                         session_id: self.session.id.clone(),
-                    })
-                    .await;
+                    }
+                );
                 return Ok(());
             }
 
@@ -482,12 +494,13 @@ impl Agent {
 
             for call in &tool_calls {
                 tracing::debug!(tool = %call.name, "streaming tool start");
-                let _ = tx
-                    .send(ChatStreamEvent::ToolStart {
+                send_or_cancel!(
+                    tx,
+                    ChatStreamEvent::ToolStart {
                         tool: call.name.clone(),
                         args: serde_json::to_value(&call.arguments).ok(),
-                    })
-                    .await;
+                    }
+                );
 
                 let result = tool::call::execute_tool_call(call, &self.tool_registry).await;
 
@@ -501,12 +514,13 @@ impl Agent {
                     self.session.add_tool_message(&todo_msg);
                 }
 
-                let _ = tx
-                    .send(ChatStreamEvent::ToolResult {
+                send_or_cancel!(
+                    tx,
+                    ChatStreamEvent::ToolResult {
                         tool: result.name.clone(),
                         is_error: result.is_error,
-                    })
-                    .await;
+                    }
+                );
 
                 let result_msg = tool::call::format_tool_result_message(&result);
                 self.session.add_tool_message(&result_msg);

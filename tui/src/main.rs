@@ -278,6 +278,7 @@ impl App {
     }
 
     fn handle_key(&mut self, key: KeyEvent) {
+        // Global shortcuts (fire regardless of completion state)
         match key.code {
             KeyCode::Char('q') if key.modifiers == KeyModifiers::CONTROL => {
                 self.should_quit = true;
@@ -295,10 +296,80 @@ impl App {
             _ => {}
         }
 
+        // Shift+Enter / Ctrl+J → insert newline (dismisses completion popup if open)
+        let is_newline = matches!(key.code, KeyCode::Enter if key.modifiers == KeyModifiers::SHIFT)
+            || matches!(key.code, KeyCode::Char('\r') if key.modifiers == KeyModifiers::SHIFT)
+            || matches!(key.code, KeyCode::Char('j') if key.modifiers == KeyModifiers::CONTROL);
+        if is_newline {
+            self.completion_visible = false;
+            self.completion_offset = 0;
+            self.input.insert(self.cursor, '\n');
+            self.cursor += 1;
+            return;
+        }
+
+        // Ctrl+V / Ctrl+Shift+V → paste from clipboard
+        let c = match key.code {
+            KeyCode::Char(c) => c.to_ascii_lowercase() == 'v',
+            _ => false,
+        };
+        if c && (key.modifiers == KeyModifiers::CONTROL
+            || key.modifiers == KeyModifiers::CONTROL | KeyModifiers::SHIFT)
+        {
+            if let Some(text) = paste_from_clipboard() {
+                let before = self.input[..self.cursor].to_string();
+                let after = self.input[self.cursor..].to_string();
+                self.input = format!("{before}{text}{after}");
+                self.cursor += text.len();
+            }
+            self.completion_visible = false;
+            self.completion_offset = 0;
+            self.completion_selected = 0;
+            return;
+        }
+
+        // Ctrl+Backspace → delete previous word
+        if matches!(key.code, KeyCode::Backspace if key.modifiers == KeyModifiers::CONTROL) {
+            if self.cursor > 0 {
+                let preceding = &self.input[..self.cursor];
+                let trimmed_end = preceding.trim_end().len();
+                let start = if trimmed_end == 0 {
+                    0
+                } else {
+                    let before_word = trimmed_end.saturating_sub(1);
+                    preceding[..before_word]
+                        .rfind(|c: char| c == ' ')
+                        .map(|p| p + 1)
+                        .unwrap_or(0)
+                };
+                self.input.drain(start..self.cursor);
+                self.cursor = start;
+            }
+            self.completion_visible = false;
+            self.completion_offset = 0;
+            self.completion_selected = 0;
+            return;
+        }
+
+        // Esc outside a menu interrupts the current agent request.
+        if !self.completion_visible && matches!(key.code, KeyCode::Esc) {
+            self.interrupt();
+            return;
+        }
+
         if self.completion_visible {
             self.handle_completion_key(key);
         } else {
             self.handle_normal_key(key);
+        }
+    }
+
+    fn interrupt(&mut self) {
+        if self.pending_rx.is_some() {
+            self.pending_rx = None;
+            self.status = Status::Ready;
+            self.auto_scroll = true;
+            self.add_msg("info", "Interrupted.");
         }
     }
 
@@ -410,6 +481,14 @@ impl App {
     fn handle_normal_key(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Enter => {
+                let mods = key.modifiers;
+                // Shift+Enter → insert newline
+                if mods == KeyModifiers::SHIFT {
+                    self.input.insert(self.cursor, '\n');
+                    self.cursor += 1;
+                    self.update_completion();
+                    return;
+                }
                 let input = self.input.trim().to_string();
                 if !input.is_empty() && self.pending_rx.is_none() {
                     self.input.clear();
@@ -422,6 +501,17 @@ impl App {
                 }
             }
             KeyCode::Char(c) => {
+                let mods = key.modifiers;
+                // Ctrl+J → insert newline
+                if c == 'j' && mods == KeyModifiers::CONTROL {
+                    self.input.insert(self.cursor, '\n');
+                    self.cursor += 1;
+                    self.update_completion();
+                    return;
+                }
+                if !mods.is_empty() {
+                    return;
+                }
                 self.input.insert(self.cursor, c);
                 self.cursor += 1;
                 self.update_completion();
@@ -830,6 +920,12 @@ impl App {
         f.render_widget(Clear, popup_area);
         f.render_widget(list, popup_area);
     }
+}
+
+/// Read text from the system clipboard.
+fn paste_from_clipboard() -> Option<String> {
+    let mut cb = arboard::Clipboard::new().ok()?;
+    cb.get_text().ok()
 }
 
 fn spawn_worker() -> tokio::sync::mpsc::UnboundedSender<WorkerMsg> {
