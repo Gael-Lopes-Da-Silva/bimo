@@ -5,7 +5,7 @@ use tokio::sync::RwLock;
 use tracing::{info, warn};
 
 use super::types::{ProviderEntry, ProviderMap};
-use crate::config::ApiFormat;
+use crate::config::{ApiFormat, Provider};
 use crate::error::{BimoError, Result};
 
 const MODELS_DEV_URL: &str = "https://models.dev/api.json";
@@ -90,6 +90,13 @@ impl ProviderRegistry {
         let content = serde_json::to_string_pretty(&*map)?;
         tokio::fs::write(&self.cache_path, &content).await?;
         Ok(())
+    }
+
+    pub async fn builtin_cloud_providers(&self) -> Vec<Provider> {
+        let map = self.providers.read().await;
+        let mut providers: Vec<Provider> = map.values().map(|e| e.to_provider()).collect();
+        providers.sort_by(|a, b| a.id.cmp(&b.id));
+        providers
     }
 
     pub async fn list_providers(&self) -> Vec<ProviderEntry> {

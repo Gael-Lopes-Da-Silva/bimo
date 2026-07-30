@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::config::ApiFormat;
+use crate::config::{ApiFormat, Provider};
 use crate::models::ModelEntry;
 
 pub type ProviderMap = HashMap<String, ProviderEntry>;
@@ -39,5 +39,11 @@ impl ProviderEntry {
             Some(other) => ApiFormat::Other(other.to_string()),
             None => ApiFormat::OpenAICompatible,
         }
+    }
+
+    pub fn to_provider(&self) -> Provider {
+        let mut p = Provider::cloud(&self.id, &self.name, &self.base_url().unwrap_or_default());
+        p.api_format = Some(self.api_format());
+        p
     }
 }

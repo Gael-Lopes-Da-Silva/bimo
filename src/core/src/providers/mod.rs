@@ -20,18 +20,33 @@ pub fn builtin_local_providers() -> Vec<Provider> {
 }
 
 /// Look up a provider by id or name — checks configured providers first,
-/// then falls back to built-in local providers.
-pub fn resolve_provider(id_or_name: &str, configured: &[Provider]) -> Option<Provider> {
+/// then falls back to built-in local providers, then the registry.
+pub async fn resolve_provider(
+    id_or_name: &str,
+    configured: &[Provider],
+    registry: Option<&ProviderRegistry>,
+) -> Option<Provider> {
     let lower = id_or_name.to_lowercase();
-    configured
+    let from_config = configured
         .iter()
         .find(|p| p.id.to_lowercase() == lower || p.name.to_lowercase() == lower)
-        .cloned()
-        .or_else(|| {
-            builtin_local_providers()
-                .into_iter()
-                .find(|p| p.id.to_lowercase() == lower || p.name.to_lowercase() == lower)
-        })
+        .cloned();
+    if from_config.is_some() {
+        return from_config;
+    }
+    let from_builtin = builtin_local_providers()
+        .into_iter()
+        .find(|p| p.id.to_lowercase() == lower || p.name.to_lowercase() == lower);
+    if from_builtin.is_some() {
+        return from_builtin;
+    }
+    if let Some(registry) = registry {
+        return registry
+            .find_provider(id_or_name)
+            .await
+            .map(|e| e.to_provider());
+    }
+    None
 }
 
 /// Fetch available models from a provider's `/v1/models` endpoint.
