@@ -8,8 +8,6 @@ pub struct ModelInfo {
     pub name: String,
     pub provider_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub tier: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub context_window: Option<u32>,
 }
 
@@ -27,7 +25,6 @@ pub async fn fetch_models_for_provider(runtime: &ProviderRuntime) -> Result<Vec<
                 id,
                 name,
                 provider_id: runtime.id.clone(),
-                tier: rm.tier,
                 context_window,
             }
         })

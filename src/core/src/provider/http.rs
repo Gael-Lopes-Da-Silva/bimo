@@ -5,7 +5,6 @@ use crate::provider::types::{
 };
 use futures_util::StreamExt;
 use reqwest::Client;
-use std::collections::HashSet;
 use std::sync::LazyLock;
 
 static HTTP_CLIENT: LazyLock<Client> = LazyLock::new(Client::new);
@@ -54,62 +53,16 @@ fn parse_models_response(raw: &serde_json::Value) -> Result<Vec<RawModel>> {
         .filter_map(|v| {
             let id = v.get("id")?.as_str()?.to_string();
             let name = v.get("name").and_then(|n| n.as_str()).map(String::from);
-            let tier =
-                infer_tier_from_pricing(&v).or_else(|| infer_tier_from_name(&id, name.as_deref()));
             let context_window = extract_context_window(&v);
             Some(RawModel {
                 id,
                 name,
-                tier,
                 context_window,
             })
         })
         .collect();
 
     Ok(models)
-}
-
-static KNOWN_FREE_MODELS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
-    HashSet::from([
-        "deepseek-v4-flash-free",
-        "mimo-v2.5-free",
-        "laguna-s-2.1-free",
-        "ling-3.0-flash-free",
-        "north-mini-code-free",
-        "nemotron-3-ultra-free",
-        "big-pickle",
-    ])
-});
-
-fn infer_tier_from_name(id: &str, name: Option<&str>) -> Option<String> {
-    let haystack = name.unwrap_or(id).to_lowercase();
-    if haystack.contains("free") || KNOWN_FREE_MODELS.contains(&haystack.as_str()) {
-        Some("free".into())
-    } else {
-        None
-    }
-}
-
-fn infer_tier_from_pricing(model: &serde_json::Value) -> Option<String> {
-    if let Some(pricing) = model.get("pricing") {
-        let prompt_cost = pricing.get("prompt").and_then(|v| {
-            v.as_f64()
-                .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
-        });
-        let completion_cost = pricing.get("completion").and_then(|v| {
-            v.as_f64()
-                .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
-        });
-
-        match (prompt_cost, completion_cost) {
-            (Some(p), Some(c)) => Some(if p == 0.0 && c == 0.0 { "free" } else { "paid" }.into()),
-            (Some(p), None) => Some(if p == 0.0 { "free" } else { "paid" }.into()),
-            (None, Some(c)) => Some(if c == 0.0 { "free" } else { "paid" }.into()),
-            (None, None) => Some("free".into()),
-        }
-    } else {
-        None
-    }
 }
 
 fn extract_context_window(model: &serde_json::Value) -> Option<u32> {

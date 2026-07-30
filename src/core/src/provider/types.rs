@@ -37,6 +37,7 @@ pub struct ProviderRuntime {
     pub auth_header: Option<String>,
     pub auth_prefix: Option<String>,
     pub request_body_format: RequestBodyFormat,
+    pub free_models: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,8 +51,6 @@ pub struct RawModel {
     pub id: String,
     #[serde(default)]
     pub name: Option<String>,
-    #[serde(default)]
-    pub tier: Option<String>,
     #[serde(default)]
     pub context_window: Option<u32>,
 }

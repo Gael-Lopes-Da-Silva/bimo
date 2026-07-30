@@ -29,6 +29,22 @@ pub fn builtin_providers() -> Vec<ProviderInfo> {
             builtin: true,
         },
         ProviderInfo {
+            id: "opencode-zen".into(),
+            name: "Opencode Zen".into(),
+            category: ProviderCategory::Cloud,
+            requires_api_key: true,
+            default_base_url: "https://opencode.ai/zen/v1".into(),
+            builtin: true,
+        },
+        ProviderInfo {
+            id: "opencode-go".into(),
+            name: "Opencode Go".into(),
+            category: ProviderCategory::Cloud,
+            requires_api_key: true,
+            default_base_url: "https://opencode.ai/zen/go/v1".into(),
+            builtin: true,
+        },
+        ProviderInfo {
             id: "lmstudio".into(),
             name: "LM Studio".into(),
             category: ProviderCategory::Local,
@@ -52,6 +68,8 @@ fn env_api_key(provider_id: &str) -> Option<String> {
         "openai" => std::env::var("OPENAI_API_KEY").ok(),
         "anthropic" => std::env::var("ANTHROPIC_API_KEY").ok(),
         "openrouter" => std::env::var("OPENROUTER_API_KEY").ok(),
+        "opencode-go" => std::env::var("OPENCODE_API_KEY").ok(),
+        "opencode-zen" => std::env::var("OPENCODE_API_KEY").ok(),
         "lmstudio" => std::env::var("LMSTUDIO_API_KEY").ok(),
         "ollama" => std::env::var("OLLAMA_API_KEY").ok(),
         _ => None,
@@ -128,7 +146,7 @@ impl ProviderRegistry {
             )));
         }
 
-        let (chat_endpoint, models_endpoint, auth_header, auth_prefix, format) =
+        let (chat_endpoint, models_endpoint, auth_header, auth_prefix, format, free_models) =
             match info.id.as_str() {
                 "anthropic" => (
                     "/v1/messages".into(),
@@ -136,6 +154,23 @@ impl ProviderRegistry {
                     Some("x-api-key".into()),
                     None,
                     RequestBodyFormat::Anthropic,
+                    Vec::new(),
+                ),
+                "opencode-zen" => (
+                    "/chat/completions".into(),
+                    Some("/models".into()),
+                    Some("Authorization".into()),
+                    Some("Bearer ".into()),
+                    RequestBodyFormat::OpenAi,
+                    vec![
+                        "deepseek-v4-flash-free".into(),
+                        "mimo-v2.5-free".into(),
+                        "laguna-s-2.1-free".into(),
+                        "ling-3.0-flash-free".into(),
+                        "north-mini-code-free".into(),
+                        "nemotron-3-ultra-free".into(),
+                        "big-pickle".into(),
+                    ],
                 ),
                 _ => (
                     "/chat/completions".into(),
@@ -143,6 +178,7 @@ impl ProviderRegistry {
                     Some("Authorization".into()),
                     Some("Bearer ".into()),
                     RequestBodyFormat::OpenAi,
+                    Vec::new(),
                 ),
             };
 
@@ -157,6 +193,7 @@ impl ProviderRegistry {
             auth_header,
             auth_prefix,
             request_body_format: format,
+            free_models,
         })
     }
 
@@ -184,6 +221,7 @@ impl ProviderRegistry {
             auth_header: cp.auth_header.clone(),
             auth_prefix: cp.auth_prefix.clone(),
             request_body_format: RequestBodyFormat::OpenAi,
+            free_models: Vec::new(),
         })
     }
 }
