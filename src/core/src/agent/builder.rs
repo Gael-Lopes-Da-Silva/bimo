@@ -16,6 +16,7 @@ pub struct AgentBuilder {
     settings: Settings,
     project_dir: Option<PathBuf>,
     session: Option<crate::session::Session>,
+    user_prompt: Option<String>,
     max_steps: Option<usize>,
     temperature: Option<f32>,
     max_tokens: Option<u32>,
@@ -29,6 +30,7 @@ impl AgentBuilder {
             settings: Settings::default(),
             project_dir: None,
             session: None,
+            user_prompt: None,
             max_steps: None,
             temperature: None,
             max_tokens: None,
@@ -76,6 +78,11 @@ impl AgentBuilder {
         self
     }
 
+    pub fn with_user_prompt(mut self, prompt: String) -> Self {
+        self.user_prompt = Some(prompt);
+        self
+    }
+
     pub fn build(self) -> Result<Agent> {
         let provider = self
             .provider
@@ -92,6 +99,10 @@ impl AgentBuilder {
             ("TOOLS".to_string(), tools_desc),
         ]));
 
+        let user_prompt = self.user_prompt.ok_or_else(|| {
+            crate::error::BimoError::Config("No user prompt provided".to_string())
+        })?;
+
         let max_steps = self.max_steps.unwrap_or(self.settings.max_steps);
 
         let runner = AgentRunner {
@@ -100,6 +111,7 @@ impl AgentBuilder {
             provider_api_key: provider.api_key,
             provider_base_url: provider.base_url,
             system_prompt,
+            user_prompt,
             max_steps,
             temperature: self.temperature,
             max_tokens: self.max_tokens,

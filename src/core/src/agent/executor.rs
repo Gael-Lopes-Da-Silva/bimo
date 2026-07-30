@@ -38,6 +38,7 @@ pub(crate) struct AgentRunner {
     pub provider_api_key: Option<String>,
     pub provider_base_url: Option<String>,
     pub system_prompt: String,
+    pub user_prompt: String,
     pub max_steps: usize,
     pub temperature: Option<f32>,
     pub max_tokens: Option<u32>,
@@ -113,7 +114,7 @@ impl AgentRunner {
     async fn execute(self) -> std::result::Result<(), String> {
         let tools = crate::tools::all_tools();
 
-        // Resolve base URL: explicit config → local provider → registry → default
+        // Resolve base URL: explicit config → local provider → registry lookup
         let base_url = if let Some(url) = &self.provider_base_url {
             url.clone()
         } else if let Some(local) = self
@@ -126,9 +127,17 @@ impl AgentRunner {
             registry
                 .provider_base_url(&self.provider_name)
                 .await
-                .unwrap_or_else(|| "https://api.openai.com/v1".to_string())
+                .ok_or_else(|| {
+                    format!(
+                        "Unknown provider '{}' — not found in registry or local config",
+                        self.provider_name
+                    )
+                })?
         } else {
-            "https://api.openai.com/v1".to_string()
+            return Err(format!(
+                "Unknown provider '{}' — no base_url configured and no registry available",
+                self.provider_name
+            ));
         };
 
         let mut builder_cfg = OpenAICompatible::<DynamicModel>::builder()
@@ -146,7 +155,7 @@ impl AgentRunner {
         let mut req_builder = aisdk::core::LanguageModelRequest::builder()
             .model(model)
             .system(&self.system_prompt)
-            .prompt("I am ready to begin. Please provide your first task.");
+            .prompt(&self.user_prompt);
 
         for tool in tools {
             req_builder = req_builder.with_tool(tool);
