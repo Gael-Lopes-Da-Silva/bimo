@@ -1,23 +1,8 @@
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-pub type ProviderMap = HashMap<String, ProviderEntry>;
-pub type ModelMap = HashMap<String, ModelEntry>;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProviderEntry {
-    pub id: String,
-    pub name: String,
-    #[serde(default)]
-    pub doc: Option<String>,
-    #[serde(default)]
-    pub env: Vec<String>,
-    #[serde(default)]
-    pub npm: Option<String>,
-    #[serde(default)]
-    pub api: Option<serde_json::Value>,
-    pub models: ModelMap,
-}
+pub type ModelMap = HashMap<String, ModelEntry>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelEntry {

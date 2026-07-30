@@ -1,17 +1,17 @@
-use std::sync::Arc;
-
-use aisdk::core::{DynamicModel, LanguageModelStreamChunkType};
-use aisdk::providers::OpenAICompatible;
+use aisdk::core::capabilities::{TextInputSupport, ToolCallSupport};
+use aisdk::core::{DynamicModel, LanguageModel, LanguageModelStreamChunkType};
+use aisdk::providers::{Anthropic, OpenAICompatible};
 use futures::StreamExt;
 use tokio::sync::broadcast;
 use tracing::info;
 
-use crate::config::LocalProvider;
+use crate::config::ApiFormat;
 use crate::error::Result;
-use crate::models::ModelRegistry;
 use crate::session::Session;
+use crate::tools;
 
-type ModelProvider = OpenAICompatible<DynamicModel>;
+type OpenAIModel = OpenAICompatible<DynamicModel>;
+type AnthropicModel = Anthropic<DynamicModel>;
 
 #[derive(Debug, Clone)]
 pub enum AgentEvent {
@@ -39,14 +39,186 @@ pub(crate) struct AgentRunner {
     pub provider_name: String,
     pub provider_model: String,
     pub provider_api_key: Option<String>,
-    pub provider_base_url: Option<String>,
+    pub provider_base_url: String,
+    pub api_format: ApiFormat,
     pub system_prompt: String,
     pub user_prompt: String,
     pub max_steps: usize,
     pub temperature: Option<f32>,
     pub max_tokens: Option<u32>,
-    pub local_providers: Vec<LocalProvider>,
-    pub registry: Option<Arc<ModelRegistry>>,
+}
+
+enum ModelProvider {
+    OpenAI(Box<OpenAIModel>),
+    Anthropic(Box<AnthropicModel>),
+}
+
+impl ModelProvider {
+    async fn build(
+        api_format: &ApiFormat,
+        base_url: &str,
+        model_name: &str,
+        api_key: Option<String>,
+    ) -> std::result::Result<Self, String> {
+        match api_format {
+            ApiFormat::OpenAICompatible | ApiFormat::OpenAI | ApiFormat::Google => {
+                Self::build_openai(base_url, model_name, api_key).await
+            }
+            ApiFormat::Anthropic => Self::build_anthropic(base_url, model_name, api_key).await,
+            ApiFormat::Other(_) => Self::build_openai(base_url, model_name, api_key).await,
+        }
+    }
+
+    async fn build_openai(
+        base_url: &str,
+        model_name: &str,
+        api_key: Option<String>,
+    ) -> std::result::Result<Self, String> {
+        let mut builder = OpenAICompatible::<DynamicModel>::builder()
+            .base_url(base_url)
+            .model_name(model_name);
+        if let Some(key) = api_key {
+            builder = builder.api_key(key);
+        }
+        builder
+            .build()
+            .map(|m| Self::OpenAI(Box::new(m)))
+            .map_err(|e| format!("Failed to build OpenAI-compatible model: {e}"))
+    }
+
+    async fn build_anthropic(
+        base_url: &str,
+        model_name: &str,
+        api_key: Option<String>,
+    ) -> std::result::Result<Self, String> {
+        let mut builder = Anthropic::<DynamicModel>::builder()
+            .base_url(base_url)
+            .model_name(model_name);
+        if let Some(key) = api_key {
+            builder = builder.api_key(key);
+        }
+        builder
+            .build()
+            .map(|m| Self::Anthropic(Box::new(m)))
+            .map_err(|e| format!("Failed to build Anthropic model: {e}"))
+    }
+
+    async fn execute(
+        self,
+        system_prompt: &str,
+        user_prompt: &str,
+        max_steps: usize,
+    ) -> std::result::Result<(), String> {
+        match self {
+            Self::OpenAI(model) => {
+                execute_model(*model, system_prompt, user_prompt, max_steps).await
+            }
+            Self::Anthropic(model) => {
+                execute_model(*model, system_prompt, user_prompt, max_steps).await
+            }
+        }
+    }
+
+    async fn execute_stream(
+        self,
+        system_prompt: &str,
+        user_prompt: &str,
+        max_steps: usize,
+        tx: broadcast::Sender<AgentEvent>,
+    ) {
+        match self {
+            Self::OpenAI(model) => {
+                execute_model_stream(*model, system_prompt, user_prompt, max_steps, tx).await
+            }
+            Self::Anthropic(model) => {
+                execute_model_stream(*model, system_prompt, user_prompt, max_steps, tx).await
+            }
+        }
+    }
+}
+
+async fn execute_model<M: LanguageModel + TextInputSupport + ToolCallSupport>(
+    model: M,
+    system_prompt: &str,
+    user_prompt: &str,
+    max_steps: usize,
+) -> std::result::Result<(), String> {
+    let tools = tools::all_tools();
+
+    let mut req_builder = aisdk::core::LanguageModelRequest::<M>::builder()
+        .model(model)
+        .system(system_prompt)
+        .prompt(user_prompt);
+
+    for tool in tools {
+        req_builder = req_builder.with_tool(tool);
+    }
+
+    let mut request = req_builder
+        .stop_when(aisdk::core::utils::step_count_is(max_steps))
+        .build();
+
+    request.generate_text().await.map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+async fn execute_model_stream<M: LanguageModel + TextInputSupport + ToolCallSupport>(
+    model: M,
+    system_prompt: &str,
+    user_prompt: &str,
+    max_steps: usize,
+    tx: broadcast::Sender<AgentEvent>,
+) {
+    let tools = tools::all_tools();
+
+    let mut req_builder = aisdk::core::LanguageModelRequest::<M>::builder()
+        .model(model)
+        .system(system_prompt)
+        .prompt(user_prompt);
+
+    for tool in tools {
+        req_builder = req_builder.with_tool(tool);
+    }
+
+    let mut request = req_builder
+        .stop_when(aisdk::core::utils::step_count_is(max_steps))
+        .build();
+
+    match request.stream_text().await {
+        Ok(response) => {
+            let mut stream = response.stream;
+            while let Some(chunk) = stream.next().await {
+                match chunk {
+                    LanguageModelStreamChunkType::Text(text) => {
+                        let _ = tx.send(AgentEvent::TextDelta(text));
+                    }
+                    LanguageModelStreamChunkType::Reasoning(text) => {
+                        let _ = tx.send(AgentEvent::ReasoningDelta(text));
+                    }
+                    LanguageModelStreamChunkType::End(_) => {
+                        let _ = tx.send(AgentEvent::Done);
+                        return;
+                    }
+                    LanguageModelStreamChunkType::Failed(err) => {
+                        let _ = tx.send(AgentEvent::Error(err));
+                        let _ = tx.send(AgentEvent::Done);
+                        return;
+                    }
+                    LanguageModelStreamChunkType::Incomplete(msg) => {
+                        let _ = tx.send(AgentEvent::TextDelta(msg));
+                        let _ = tx.send(AgentEvent::Done);
+                        return;
+                    }
+                    _ => {}
+                }
+            }
+            let _ = tx.send(AgentEvent::Done);
+        }
+        Err(e) => {
+            let _ = tx.send(AgentEvent::Error(e.to_string()));
+            let _ = tx.send(AgentEvent::Done);
+        }
+    }
 }
 
 impl Agent {
@@ -54,8 +226,6 @@ impl Agent {
         super::AgentBuilder::new()
     }
 
-    /// Run the agent as a oneshot (non-streaming). The response is not forwarded
-    /// as text deltas — use `run_stream` for real-time deltas.
     pub async fn run(&mut self) -> Result<broadcast::Receiver<AgentEvent>> {
         let runner = self
             .runner
@@ -64,8 +234,8 @@ impl Agent {
 
         let (tx, rx) = broadcast::channel(256);
 
-        let todos: crate::tools::SharedTodoList = crate::tools::new_shared_todolist();
-        crate::tools::init_todo_list(todos.clone());
+        let todos: tools::SharedTodoList = tools::new_shared_todolist();
+        tools::init_todo_list(todos.clone());
 
         let session_id = self.session.id.clone();
 
@@ -85,8 +255,6 @@ impl Agent {
         Ok(rx)
     }
 
-    /// Run the agent with streaming. Each text/reasoning delta is forwarded
-    /// as an `AgentEvent::TextDelta` / `AgentEvent::ReasoningDelta` in real time.
     pub async fn run_stream(&mut self) -> Result<broadcast::Receiver<AgentEvent>> {
         let runner = self
             .runner
@@ -95,8 +263,8 @@ impl Agent {
 
         let (tx, rx) = broadcast::channel(256);
 
-        let todos: crate::tools::SharedTodoList = crate::tools::new_shared_todolist();
-        crate::tools::init_todo_list(todos.clone());
+        let todos: tools::SharedTodoList = tools::new_shared_todolist();
+        tools::init_todo_list(todos.clone());
 
         let session_id = self.session.id.clone();
 
@@ -108,7 +276,6 @@ impl Agent {
         Ok(rx)
     }
 
-    /// Oneshot helper that collects all text into a single string.
     pub async fn run_text(&mut self) -> Result<String> {
         let mut rx = self.run().await?;
         let mut output = String::new();
@@ -140,81 +307,24 @@ impl Agent {
 }
 
 impl AgentRunner {
-    /// Build the provider model from the runner configuration.
     async fn build_model(&self) -> std::result::Result<ModelProvider, String> {
-        let base_url = self.resolve_base_url().await?;
-
-        let mut builder_cfg = OpenAICompatible::<DynamicModel>::builder()
-            .base_url(base_url)
-            .model_name(&self.provider_model);
-
-        if let Some(key) = &self.provider_api_key {
-            builder_cfg = builder_cfg.api_key(key.clone());
-        }
-
-        builder_cfg
-            .build()
-            .map_err(|e| format!("Failed to build provider: {e}"))
+        ModelProvider::build(
+            &self.api_format,
+            &self.provider_base_url,
+            &self.provider_model,
+            self.provider_api_key.clone(),
+        )
+        .await
     }
 
-    async fn resolve_base_url(&self) -> std::result::Result<String, String> {
-        if let Some(url) = &self.provider_base_url {
-            return Ok(url.clone());
-        }
-
-        if let Some(local) = self
-            .local_providers
-            .iter()
-            .find(|p| p.name.to_lowercase() == self.provider_name.to_lowercase())
-        {
-            return Ok(local.base_url.clone());
-        }
-
-        if let Some(registry) = &self.registry {
-            return registry
-                .provider_base_url(&self.provider_name)
-                .await
-                .ok_or_else(|| {
-                    format!(
-                        "Unknown provider '{}' — not found in registry or local config",
-                        self.provider_name
-                    )
-                });
-        }
-
-        Err(format!(
-            "Unknown provider '{}' — no base_url configured and no registry available",
-            self.provider_name
-        ))
-    }
-
-    /// Oneshot execution — consumes self, runs to completion, returns Ok/Err.
     async fn execute(self) -> std::result::Result<(), String> {
-        let tools = crate::tools::all_tools();
         let model = self.build_model().await?;
-
-        let mut req_builder = aisdk::core::LanguageModelRequest::<ModelProvider>::builder()
-            .model(model)
-            .system(&self.system_prompt)
-            .prompt(&self.user_prompt);
-
-        for tool in tools {
-            req_builder = req_builder.with_tool(tool);
-        }
-
-        let mut request = req_builder
-            .stop_when(aisdk::core::utils::step_count_is(self.max_steps))
-            .build();
-
-        request.generate_text().await.map_err(|e| e.to_string())?;
-
-        Ok(())
+        model
+            .execute(&self.system_prompt, &self.user_prompt, self.max_steps)
+            .await
     }
 
-    /// Streaming execution — forwards real-time deltas through the broadcast channel.
     async fn execute_stream(self, tx: broadcast::Sender<AgentEvent>) {
-        let tools = crate::tools::all_tools();
-
         let model = match self.build_model().await {
             Ok(m) => m,
             Err(e) => {
@@ -223,55 +333,8 @@ impl AgentRunner {
                 return;
             }
         };
-
-        let mut req_builder = aisdk::core::LanguageModelRequest::<ModelProvider>::builder()
-            .model(model)
-            .system(&self.system_prompt)
-            .prompt(&self.user_prompt);
-
-        for tool in tools {
-            req_builder = req_builder.with_tool(tool);
-        }
-
-        let mut request = req_builder
-            .stop_when(aisdk::core::utils::step_count_is(self.max_steps))
-            .build();
-
-        match request.stream_text().await {
-            Ok(response) => {
-                let mut stream = response.stream;
-                while let Some(chunk) = stream.next().await {
-                    match chunk {
-                        LanguageModelStreamChunkType::Text(text) => {
-                            let _ = tx.send(AgentEvent::TextDelta(text));
-                        }
-                        LanguageModelStreamChunkType::Reasoning(text) => {
-                            let _ = tx.send(AgentEvent::ReasoningDelta(text));
-                        }
-                        LanguageModelStreamChunkType::End(_) => {
-                            let _ = tx.send(AgentEvent::Done);
-                            return;
-                        }
-                        LanguageModelStreamChunkType::Failed(err) => {
-                            let _ = tx.send(AgentEvent::Error(err));
-                            let _ = tx.send(AgentEvent::Done);
-                            return;
-                        }
-                        LanguageModelStreamChunkType::Incomplete(msg) => {
-                            let _ = tx.send(AgentEvent::TextDelta(msg));
-                            let _ = tx.send(AgentEvent::Done);
-                            return;
-                        }
-                        _ => {}
-                    }
-                }
-                // Stream ended without a terminal event (shouldn't normally happen)
-                let _ = tx.send(AgentEvent::Done);
-            }
-            Err(e) => {
-                let _ = tx.send(AgentEvent::Error(e.to_string()));
-                let _ = tx.send(AgentEvent::Done);
-            }
-        }
+        model
+            .execute_stream(&self.system_prompt, &self.user_prompt, self.max_steps, tx)
+            .await;
     }
 }
