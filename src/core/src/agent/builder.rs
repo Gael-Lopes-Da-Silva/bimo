@@ -1,11 +1,13 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use crate::agent::Agent;
-use crate::agent::agent::AgentRunner;
+use crate::agent::executor::AgentRunner;
 use crate::agent::instructions::load_instructions;
 use crate::config::{ProviderConfig, Settings};
 use crate::error::Result;
+use crate::models::ModelRegistry;
 use crate::prompt::PromptEngine;
 use crate::tools;
 
@@ -17,6 +19,7 @@ pub struct AgentBuilder {
     max_steps: Option<usize>,
     temperature: Option<f32>,
     max_tokens: Option<u32>,
+    registry: Option<Arc<ModelRegistry>>,
 }
 
 impl AgentBuilder {
@@ -29,6 +32,7 @@ impl AgentBuilder {
             max_steps: None,
             temperature: None,
             max_tokens: None,
+            registry: None,
         }
     }
 
@@ -67,6 +71,11 @@ impl AgentBuilder {
         self
     }
 
+    pub fn with_registry(mut self, registry: Arc<ModelRegistry>) -> Self {
+        self.registry = Some(registry);
+        self
+    }
+
     pub fn build(self) -> Result<Agent> {
         let provider = self
             .provider
@@ -94,9 +103,11 @@ impl AgentBuilder {
             max_steps,
             temperature: self.temperature,
             max_tokens: self.max_tokens,
+            local_providers: self.settings.local_providers.clone(),
+            registry: self.registry,
         };
 
-        let session = self.session.unwrap_or_else(crate::session::Session::new);
+        let session = self.session.unwrap_or_default();
 
         Ok(Agent {
             runner: Some(runner),

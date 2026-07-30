@@ -7,7 +7,7 @@ pub mod session;
 pub mod tools;
 
 pub use agent::{Agent, AgentBuilder, AgentEvent};
-pub use config::{ProviderConfig, ProvidersFile, Settings};
+pub use config::{LocalProvider, ProviderConfig, ProvidersFile, Settings};
 pub use error::{BimoError, Result};
 pub use models::ModelRegistry;
 pub use prompt::PromptEngine;

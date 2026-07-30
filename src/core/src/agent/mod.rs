@@ -1,6 +1,6 @@
-mod agent;
 mod builder;
+mod executor;
 pub mod instructions;
 
-pub use agent::{Agent, AgentEvent};
 pub use builder::AgentBuilder;
+pub use executor::{Agent, AgentEvent};

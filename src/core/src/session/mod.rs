@@ -1,5 +1,5 @@
 mod manager;
-mod session;
+mod session_impl;
 
 pub use manager::SessionManager;
-pub use session::{Message, Session};
+pub use session_impl::{Message, Session};

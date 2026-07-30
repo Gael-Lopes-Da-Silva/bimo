@@ -9,6 +9,7 @@ use crate::error::{BimoError, Result};
 
 const MODELS_DEV_URL: &str = "https://models.dev/api.json";
 
+#[derive(Debug, Clone)]
 pub struct ModelRegistry {
     providers: Arc<RwLock<ProviderMap>>,
     cache_path: PathBuf,
@@ -61,7 +62,6 @@ impl ModelRegistry {
         let providers: ProviderMap =
             serde_json::from_slice(&bytes).map_err(|e| format!("JSON parse failed: {e}"))?;
 
-        // Persist to cache
         if let Err(e) = std::fs::write(&self.cache_path, &bytes) {
             warn!("Failed to write models cache: {e}");
         }
@@ -93,7 +93,6 @@ impl ModelRegistry {
         Ok(())
     }
 
-    /// List all providers in the registry.
     pub async fn list_providers(&self) -> Vec<ProviderEntry> {
         let map = self.providers.read().await;
         let mut providers: Vec<ProviderEntry> = map.values().cloned().collect();
@@ -101,7 +100,6 @@ impl ModelRegistry {
         providers
     }
 
-    /// Find a provider by ID or name.
     pub async fn find_provider(&self, id_or_name: &str) -> Option<ProviderEntry> {
         let map = self.providers.read().await;
         let lower = id_or_name.to_lowercase();
@@ -113,7 +111,6 @@ impl ModelRegistry {
         })
     }
 
-    /// List models for a given provider.
     pub async fn list_models(&self, provider_id: &str) -> Vec<ModelEntry> {
         let map = self.providers.read().await;
         map.get(provider_id)
@@ -125,7 +122,6 @@ impl ModelRegistry {
             .unwrap_or_default()
     }
 
-    /// Find a specific model across all providers.
     pub async fn find_model(&self, model_id: &str) -> Option<(String, ModelEntry)> {
         let map = self.providers.read().await;
         for (pid, provider) in map.iter() {
@@ -136,7 +132,7 @@ impl ModelRegistry {
         None
     }
 
-    /// Get the base URL for a provider from the registry.
+    /// Look up a provider's base URL from the registry by ID or name.
     pub async fn provider_base_url(&self, provider_id: &str) -> Option<String> {
         let map = self.providers.read().await;
         map.get(provider_id).and_then(|p| {
@@ -147,7 +143,37 @@ impl ModelRegistry {
         })
     }
 
-    /// Get the environment variables needed for a provider.
+    /// Resolve a provider's base URL.
+    /// Priority: explicit base_url → local provider match → registry lookup → default fallback.
+    pub async fn resolve_base_url(
+        &self,
+        provider_name: &str,
+        explicit_base_url: Option<String>,
+        local_providers: &[crate::config::LocalProvider],
+    ) -> String {
+        // 1. Explicit config
+        if let Some(url) = explicit_base_url {
+            return url;
+        }
+
+        // 2. Local provider match (ollama, lmstudio, etc.)
+        let lower = provider_name.to_lowercase();
+        if let Some(local) = local_providers
+            .iter()
+            .find(|p| p.name.to_lowercase() == lower)
+        {
+            return local.base_url.clone();
+        }
+
+        // 3. Registry lookup
+        if let Some(url) = self.provider_base_url(provider_name).await {
+            return url;
+        }
+
+        // 4. Default fallback
+        "https://api.openai.com/v1".to_string()
+    }
+
     pub async fn provider_env_vars(&self, provider_id: &str) -> Vec<String> {
         let map = self.providers.read().await;
         map.get(provider_id)
@@ -155,13 +181,11 @@ impl ModelRegistry {
             .unwrap_or_default()
     }
 
-    /// Number of loaded providers.
     pub async fn provider_count(&self) -> usize {
         let map = self.providers.read().await;
         map.len()
     }
 
-    /// Number of total models across all providers.
     pub async fn model_count(&self) -> usize {
         let map = self.providers.read().await;
         map.values().map(|p| p.models.len()).sum()

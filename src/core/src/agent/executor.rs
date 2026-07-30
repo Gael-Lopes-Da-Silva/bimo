@@ -1,9 +1,13 @@
+use std::sync::Arc;
+
 use aisdk::core::DynamicModel;
 use aisdk::providers::OpenAICompatible;
 use tokio::sync::broadcast;
 use tracing::info;
 
+use crate::config::LocalProvider;
 use crate::error::Result;
+use crate::models::ModelRegistry;
 use crate::session::Session;
 
 #[derive(Debug, Clone)]
@@ -37,28 +41,8 @@ pub(crate) struct AgentRunner {
     pub max_steps: usize,
     pub temperature: Option<f32>,
     pub max_tokens: Option<u32>,
-}
-
-/// Known provider base URLs when none is configured.
-fn default_base_url(name: &str) -> Option<&'static str> {
-    match name.to_lowercase().as_str() {
-        "openai" => Some("https://api.openai.com/v1"),
-        "anthropic" => Some("https://api.anthropic.com/v1"),
-        "google" | "gemini" => Some("https://generativelanguage.googleapis.com/v1beta/openai"),
-        "deepseek" => Some("https://api.deepseek.com"),
-        "openrouter" => Some("https://openrouter.ai/api/v1"),
-        "groq" => Some("https://api.groq.com/openai/v1"),
-        "mistral" => Some("https://api.mistral.ai/v1"),
-        "xai" | "x-ai" | "grok" => Some("https://api.x.ai/v1"),
-        "togetherai" | "together" => Some("https://api.together.xyz/v1"),
-        "perplexity" => Some("https://api.perplexity.ai"),
-        "github" | "github-models" => Some("https://models.inference.ai.azure.com"),
-        "huggingface" | "hf" => Some("https://router.huggingface.co/v1"),
-        "nvidia" => Some("https://integrate.api.nvidia.com/v1"),
-        "cohere" => Some("https://api.cohere.com/v1"),
-        "fireworks" | "fireworks-ai" => Some("https://api.fireworks.ai/inference/v1"),
-        _ => None,
-    }
+    pub local_providers: Vec<LocalProvider>,
+    pub registry: Option<Arc<ModelRegistry>>,
 }
 
 impl Agent {
@@ -129,11 +113,23 @@ impl AgentRunner {
     async fn execute(self) -> std::result::Result<(), String> {
         let tools = crate::tools::all_tools();
 
-        let base_url = self
-            .provider_base_url
-            .clone()
-            .or_else(|| default_base_url(&self.provider_name).map(String::from))
-            .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
+        // Resolve base URL: explicit config → local provider → registry → default
+        let base_url = if let Some(url) = &self.provider_base_url {
+            url.clone()
+        } else if let Some(local) = self
+            .local_providers
+            .iter()
+            .find(|p| p.name.to_lowercase() == self.provider_name.to_lowercase())
+        {
+            local.base_url.clone()
+        } else if let Some(registry) = &self.registry {
+            registry
+                .provider_base_url(&self.provider_name)
+                .await
+                .unwrap_or_else(|| "https://api.openai.com/v1".to_string())
+        } else {
+            "https://api.openai.com/v1".to_string()
+        };
 
         let mut builder_cfg = OpenAICompatible::<DynamicModel>::builder()
             .base_url(base_url)

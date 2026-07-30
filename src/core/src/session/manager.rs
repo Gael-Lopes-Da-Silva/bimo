@@ -1,10 +1,11 @@
+use std::cmp::Reverse;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 use tokio::time::{Duration, interval};
 use tracing::{info, warn};
 
-use super::session::Session;
+use super::session_impl::Session;
 use crate::config::Settings;
 
 pub struct SessionManager {
@@ -102,7 +103,7 @@ impl SessionManager {
         // Enforce max sessions (oldest first)
         if map.len() > max_sessions {
             let mut sessions_sorted: Vec<(String, Session)> = map.drain().collect();
-            sessions_sorted.sort_by(|a, b| b.1.updated_at.cmp(&a.1.updated_at));
+            sessions_sorted.sort_by_key(|(_, s)| Reverse(s.updated_at));
 
             let to_remove = sessions_sorted.split_off(max_sessions);
             for (id, session) in to_remove {
@@ -154,7 +155,7 @@ impl SessionManager {
     pub async fn list(&self) -> Vec<Session> {
         let map = self.sessions.read().await;
         let mut sessions: Vec<Session> = map.values().cloned().collect();
-        sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        sessions.sort_by_key(|s| Reverse(s.updated_at));
         sessions
     }
 
@@ -167,10 +168,10 @@ impl SessionManager {
 
 impl Drop for SessionManager {
     fn drop(&mut self) {
-        if let Ok(mut handle) = self.cleanup_handle.try_lock() {
-            if let Some(h) = handle.take() {
-                h.abort();
-            }
+        if let Ok(mut handle) = self.cleanup_handle.try_lock()
+            && let Some(h) = handle.take()
+        {
+            h.abort();
         }
     }
 }
