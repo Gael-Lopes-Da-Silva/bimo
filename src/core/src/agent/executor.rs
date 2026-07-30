@@ -14,7 +14,9 @@ use crate::error::Result;
 use crate::session::Session;
 use crate::tools;
 
+/// Erased OpenAI-compatible model type used at runtime.
 type OpenAIModel = OpenAICompatible<DynamicModel>;
+/// Erased Anthropic model type used at runtime.
 type AnthropicModel = Anthropic<DynamicModel>;
 
 /// Events emitted by the agent during a streaming run.
@@ -46,6 +48,7 @@ pub struct Agent {
     pub session: Session,
 }
 
+/// Internal agent runner holding all parameters needed to build and execute a model request.
 #[allow(dead_code)]
 pub(crate) struct AgentRunner {
     pub provider_name: String,
@@ -60,12 +63,14 @@ pub(crate) struct AgentRunner {
     pub max_tokens: Option<u32>,
 }
 
+/// Erased model type — dispatches to the concrete provider SDK at build time.
 enum ModelProvider {
     OpenAI(Box<OpenAIModel>),
     Anthropic(Box<AnthropicModel>),
 }
 
 impl ModelProvider {
+    /// Builds the appropriate model variant from config fields.
     async fn build(
         api_format: &ApiFormat,
         base_url: &str,
@@ -81,6 +86,7 @@ impl ModelProvider {
         }
     }
 
+    /// Builds an OpenAI-compatible (or Google) model client.
     async fn build_openai(
         base_url: &str,
         model_name: &str,
@@ -98,6 +104,7 @@ impl ModelProvider {
             .map_err(|e| format!("Failed to build OpenAI-compatible model: {e}"))
     }
 
+    /// Builds an Anthropic model client.
     async fn build_anthropic(
         base_url: &str,
         model_name: &str,
@@ -180,6 +187,7 @@ impl Agent {
 }
 
 impl AgentRunner {
+    /// Builds a fully-configured `LanguageModelRequest` (tools + stop condition).
     fn build_request<M: LanguageModel + TextInputSupport + ToolCallSupport>(
         &self,
         model: M,
@@ -197,6 +205,7 @@ impl AgentRunner {
             .build()
     }
 
+    /// Runs the model non-streaming — all tool calls complete before returning.
     async fn execute_model<M: LanguageModel + TextInputSupport + ToolCallSupport>(
         &self,
         model: M,
@@ -206,6 +215,7 @@ impl AgentRunner {
         Ok(())
     }
 
+    /// Runs the model with streaming, emitting [`AgentEvent`]s into the channel.
     async fn execute_model_stream<M: LanguageModel + TextInputSupport + ToolCallSupport>(
         &self,
         model: M,
@@ -249,6 +259,7 @@ impl AgentRunner {
         }
     }
 
+    /// Builds a [`ModelProvider`] from the runner's config fields.
     async fn build_model(&self) -> std::result::Result<ModelProvider, String> {
         ModelProvider::build(
             &self.api_format,
@@ -259,6 +270,7 @@ impl AgentRunner {
         .await
     }
 
+    /// Runs the agent (non-streaming) — builds the model then executes.
     async fn execute(self) -> std::result::Result<(), String> {
         match self.build_model().await? {
             ModelProvider::OpenAI(model) => self.execute_model(*model).await,
@@ -266,6 +278,7 @@ impl AgentRunner {
         }
     }
 
+    /// Runs the agent with streaming — emits [`AgentEvent`]s into the channel.
     async fn execute_stream(self, tx: broadcast::Sender<AgentEvent>) {
         let model = match self.build_model().await {
             Ok(m) => m,
