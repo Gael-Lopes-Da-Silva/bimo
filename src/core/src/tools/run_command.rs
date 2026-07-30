@@ -4,6 +4,10 @@ use std::process::Command;
 use std::time::Duration;
 use tracing::info;
 
+/// Executes a shell command in the workspace and captures its output.
+///
+/// Defaults the working directory to the current directory and the timeout to
+/// 120 seconds.  Returns both stdout and stderr on success or failure.
 #[tool(
     name = "run_command",
     desc = "Execute a shell command in the workspace. Provide the command string and optionally a working directory (defaults to cwd) and timeout in seconds (defaults to 120). Use && to chain commands. Returns stdout and stderr."

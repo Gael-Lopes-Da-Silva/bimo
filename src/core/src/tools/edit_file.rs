@@ -3,6 +3,10 @@ use aisdk::macros::tool;
 use std::fs;
 use tracing::info;
 
+/// Makes a precise string replacement in an existing file.
+///
+/// When `replace_all` is `true` all occurrences of `old_string` are replaced;
+/// otherwise only the first occurrence is replaced.
 #[tool(
     name = "edit_file",
     desc = "Make a precise string replacement in an existing file. Provide the file_path, the old_string to find, and the new_string to replace it with. The old_string must match exactly, including whitespace. Use replace_all=true to replace all occurrences."

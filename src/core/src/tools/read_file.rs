@@ -3,6 +3,10 @@ use aisdk::macros::tool;
 use std::fs;
 use tracing::info;
 
+/// Reads the contents of a file, optionally restricting to a line range.
+///
+/// Lines are 1-indexed.  When both `start_line` and `end_line` are `None`
+/// the entire file is returned.
 #[tool(
     name = "read_file",
     desc = "Read the contents of a file. Optionally specify start_line and end_line (1-indexed) to read a range. Leave both None to read the entire file."

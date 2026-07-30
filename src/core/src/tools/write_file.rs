@@ -4,6 +4,9 @@ use std::fs;
 use std::path::Path;
 use tracing::info;
 
+/// Writes content to a file, creating or overwriting it.
+///
+/// Creates parent directories if they do not exist.
 #[tool(
     name = "write_file",
     desc = "Write content to a file, creating or overwriting it. Provide the file_path and the content to write. Creates parent directories if needed."
