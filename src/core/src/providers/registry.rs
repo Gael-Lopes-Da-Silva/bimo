@@ -103,12 +103,18 @@ impl ProviderRegistry {
         Ok(())
     }
 
-    /// Returns all providers from the registry as [`Provider`] instances.
+    /// Returns supported providers from the registry as [`Provider`] instances.
     ///
+    /// Entries with an unknown [`ApiFormat`](crate::config::ApiFormat) are
+    /// filtered out (we cannot safely build a client for them).
     /// The returned providers have no API key set (the caller must supply it).
     pub async fn builtin_cloud_providers(&self) -> Vec<Provider> {
         let map = self.providers.read().await;
-        let mut providers: Vec<Provider> = map.values().map(|e| e.to_provider()).collect();
+        let mut providers: Vec<Provider> = map
+            .values()
+            .filter(|e| !matches!(e.api_format(), crate::config::ApiFormat::Other(_)))
+            .map(|e| e.to_provider())
+            .collect();
         providers.sort_by(|a, b| a.id.cmp(&b.id));
         providers
     }

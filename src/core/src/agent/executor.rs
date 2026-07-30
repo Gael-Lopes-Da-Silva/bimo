@@ -4,7 +4,7 @@ use aisdk::core::capabilities::{TextInputSupport, ToolCallSupport};
 use aisdk::core::{
     DynamicModel, LanguageModel, LanguageModelRequest, LanguageModelStreamChunkType,
 };
-use aisdk::providers::{Anthropic, OpenAICompatible};
+use aisdk::providers::{Anthropic, Google, OpenAICompatible};
 use futures::StreamExt;
 use tokio::sync::broadcast;
 use tracing::info;
@@ -18,6 +18,8 @@ use crate::tools;
 type OpenAIModel = OpenAICompatible<DynamicModel>;
 /// Erased Anthropic model type used at runtime.
 type AnthropicModel = Anthropic<DynamicModel>;
+/// Erased Google model type used at runtime.
+type GoogleModel = Google<DynamicModel>;
 
 /// Events emitted by the agent during a streaming run.
 #[derive(Debug, Clone)]
@@ -67,6 +69,7 @@ pub(crate) struct AgentRunner {
 enum ModelProvider {
     OpenAI(Box<OpenAIModel>),
     Anthropic(Box<AnthropicModel>),
+    Google(Box<GoogleModel>),
 }
 
 impl ModelProvider {
@@ -78,15 +81,16 @@ impl ModelProvider {
         api_key: Option<String>,
     ) -> std::result::Result<Self, String> {
         match api_format {
-            ApiFormat::OpenAICompatible | ApiFormat::OpenAI | ApiFormat::Google => {
+            ApiFormat::OpenAICompatible | ApiFormat::OpenAI => {
                 Self::build_openai(base_url, model_name, api_key).await
             }
+            ApiFormat::Google => Self::build_google(base_url, model_name, api_key).await,
             ApiFormat::Anthropic => Self::build_anthropic(base_url, model_name, api_key).await,
-            ApiFormat::Other(_) => Self::build_openai(base_url, model_name, api_key).await,
+            ApiFormat::Other(fmt) => Err(format!("unsupported API format: {fmt}")),
         }
     }
 
-    /// Builds an OpenAI-compatible (or Google) model client.
+    /// Builds an OpenAI-compatible model client.
     async fn build_openai(
         base_url: &str,
         model_name: &str,
@@ -120,6 +124,24 @@ impl ModelProvider {
             .build()
             .map(|m| Self::Anthropic(Box::new(m)))
             .map_err(|e| format!("Failed to build Anthropic model: {e}"))
+    }
+
+    /// Builds a Google model client.
+    async fn build_google(
+        base_url: &str,
+        model_name: &str,
+        api_key: Option<String>,
+    ) -> std::result::Result<Self, String> {
+        let mut builder = Google::<DynamicModel>::builder()
+            .base_url(base_url)
+            .model_name(model_name);
+        if let Some(key) = api_key {
+            builder = builder.api_key(key);
+        }
+        builder
+            .build()
+            .map(|m| Self::Google(Box::new(m)))
+            .map_err(|e| format!("Failed to build Google model: {e}"))
     }
 }
 
@@ -275,6 +297,7 @@ impl AgentRunner {
         match self.build_model().await? {
             ModelProvider::OpenAI(model) => self.execute_model(*model).await,
             ModelProvider::Anthropic(model) => self.execute_model(*model).await,
+            ModelProvider::Google(model) => self.execute_model(*model).await,
         }
     }
 
@@ -291,6 +314,7 @@ impl AgentRunner {
         match model {
             ModelProvider::OpenAI(m) => self.execute_model_stream(*m, tx).await,
             ModelProvider::Anthropic(m) => self.execute_model_stream(*m, tx).await,
+            ModelProvider::Google(m) => self.execute_model_stream(*m, tx).await,
         }
     }
 }

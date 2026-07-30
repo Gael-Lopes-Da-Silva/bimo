@@ -46,6 +46,7 @@ pub async fn resolve_provider(
         return registry
             .find_provider(id_or_name)
             .await
+            .filter(|e| !matches!(e.api_format(), crate::config::ApiFormat::Other(_)))
             .map(|e| e.to_provider());
     }
     None
