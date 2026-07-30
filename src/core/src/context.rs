@@ -21,13 +21,12 @@ pub fn build_project_context(cwd: &str) -> ProjectContext {
         .args(["rev-parse", "--abbrev-ref", "HEAD"])
         .current_dir(cwd)
         .output()
+        && out.status.success()
     {
-        if out.status.success() {
-            let branch = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            if !branch.is_empty() {
-                git_branch = Some(branch.clone());
-                parts.push(format!("Git branch: {branch}"));
-            }
+        let branch = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if !branch.is_empty() {
+            git_branch = Some(branch.clone());
+            parts.push(format!("Git branch: {branch}"));
         }
     }
 
@@ -75,13 +74,13 @@ pub fn load_agent_instructions(cwd: &str) -> (Vec<String>, Vec<String>) {
 
     for &file in CANDIDATES {
         let path = Path::new(cwd).join(file);
-        if path.exists() {
-            if let Ok(content) = std::fs::read_to_string(&path) {
-                let trimmed = content.trim().to_string();
-                if !trimmed.is_empty() {
-                    filenames.push(file.to_string());
-                    chunks.push(format!("Instructions from {file}:\n{trimmed}"));
-                }
+        if path.exists()
+            && let Ok(content) = std::fs::read_to_string(&path)
+        {
+            let trimmed = content.trim().to_string();
+            if !trimmed.is_empty() {
+                filenames.push(file.to_string());
+                chunks.push(format!("Instructions from {file}:\n{trimmed}"));
             }
         }
     }

@@ -17,7 +17,10 @@ fn config_dir() -> Result<PathBuf> {
 pub fn read_json<T: serde::de::DeserializeOwned>(filename: &str) -> Result<T> {
     let path = config_dir()?.join(filename);
     if !path.exists() {
-        return Err(BimoError::Config(format!("file not found: {}", path.display())));
+        return Err(BimoError::Config(format!(
+            "file not found: {}",
+            path.display()
+        )));
     }
     let data = fs::read_to_string(&path)
         .map_err(|e| BimoError::Config(format!("failed to read {}: {e}", path.display())))?;

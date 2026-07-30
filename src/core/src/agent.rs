@@ -48,6 +48,7 @@ pub struct CoreAgent {
     pub available_models: Vec<ModelInfo>,
     pub runtime: Option<ProviderRuntime>,
     pub tool_registry: ToolRegistry,
+    #[allow(dead_code)]
     project_context: ProjectContext,
 }
 
@@ -63,13 +64,14 @@ impl CoreAgent {
             .map(|p| p.display().to_string())
             .unwrap_or_else(|_| "<unknown>".into());
         let project_context = build_project_context(&cwd);
-        let tool_xml = tool_registry.render_xml();
+        let tool_json =
+            serde_json::to_string_pretty(&tool_registry.render_json_schemas()).unwrap_or_default();
         let now = chrono::Local::now().format("%Y-%m-%d").to_string();
 
         let system_prompt = prompts::render(
             &prompts::load(prompts::SYSTEM),
             &[
-                ("TOOLS", &tool_xml),
+                ("TOOLS", &tool_json),
                 ("DATE", &now),
                 ("CWD", &cwd),
                 ("PROJECT_CONTEXT", &project_context.rendered),
@@ -83,7 +85,7 @@ impl CoreAgent {
                 .ok()
         });
 
-        let agent = Self {
+        Self {
             settings,
             providers_config,
             session,
@@ -92,9 +94,7 @@ impl CoreAgent {
             runtime,
             tool_registry,
             project_context,
-        };
-
-        agent
+        }
     }
 
     pub fn needs_configuration(&self) -> bool {
@@ -277,14 +277,8 @@ impl CoreAgent {
                     }
                 );
 
-                let result = execute_tool(call).await;
+                let result = execute_tool(call, &mut self.session.todos).await;
                 let is_error = result.is_err();
-
-                if call.name == "manage_todo" {
-                    if let Ok(msg) = &result {
-                        self.session.add_tool_message(msg);
-                    }
-                }
 
                 send_or_cancel!(
                     tx,

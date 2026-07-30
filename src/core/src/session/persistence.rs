@@ -48,12 +48,11 @@ impl Session {
             .map_err(|e| BimoError::Session(format!("failed to read sessions dir: {e}")))?;
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) == Some("json") {
-                if let Ok(data) = fs::read_to_string(&path) {
-                    if let Ok(session) = serde_json::from_str::<Session>(&data) {
-                        sessions.push(session.info());
-                    }
-                }
+            if path.extension().and_then(|e| e.to_str()) == Some("json")
+                && let Ok(data) = fs::read_to_string(&path)
+                && let Ok(session) = serde_json::from_str::<Session>(&data)
+            {
+                sessions.push(session.info());
             }
         }
         sessions.sort_by_key(|b| std::cmp::Reverse(b.updated_at));

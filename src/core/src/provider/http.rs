@@ -1,6 +1,8 @@
 use crate::config::settings::ThinkingConfig;
 use crate::error::{BimoError, Result};
-use crate::provider::types::{ChatCompletionResponse, ChatMessage, ProviderRuntime, RawModel, RequestBodyFormat, UsageInfo};
+use crate::provider::types::{
+    ChatCompletionResponse, ChatMessage, ProviderRuntime, RawModel, RequestBodyFormat, UsageInfo,
+};
 use futures_util::StreamExt;
 use reqwest::Client;
 use std::collections::HashSet;
@@ -25,28 +27,44 @@ pub async fn fetch_models(runtime: &ProviderRuntime) -> Result<Vec<RawModel>> {
     let status = resp.status();
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
-        return Err(BimoError::Network(format!("model fetch failed ({}): {}", status, body)));
+        return Err(BimoError::Network(format!(
+            "model fetch failed ({}): {}",
+            status, body
+        )));
     }
 
-    let raw: serde_json::Value = resp.json().await
+    let raw: serde_json::Value = resp
+        .json()
+        .await
         .map_err(|e| BimoError::Serialization(format!("failed to parse model list: {e}")))?;
 
     parse_models_response(&raw)
 }
 
 fn parse_models_response(raw: &serde_json::Value) -> Result<Vec<RawModel>> {
-    let arr = raw.get("data").and_then(|d| d.as_array()).cloned()
+    let arr = raw
+        .get("data")
+        .and_then(|d| d.as_array())
+        .cloned()
         .or_else(|| raw.as_array().cloned())
         .unwrap_or_default();
 
-    let models = arr.into_iter().filter_map(|v| {
-        let id = v.get("id")?.as_str()?.to_string();
-        let name = v.get("name").and_then(|n| n.as_str()).map(String::from);
-        let tier = infer_tier_from_pricing(&v)
-            .or_else(|| infer_tier_from_name(&id, name.as_deref()));
-        let context_window = extract_context_window(&v);
-        Some(RawModel { id, name, tier, context_window })
-    }).collect();
+    let models = arr
+        .into_iter()
+        .filter_map(|v| {
+            let id = v.get("id")?.as_str()?.to_string();
+            let name = v.get("name").and_then(|n| n.as_str()).map(String::from);
+            let tier =
+                infer_tier_from_pricing(&v).or_else(|| infer_tier_from_name(&id, name.as_deref()));
+            let context_window = extract_context_window(&v);
+            Some(RawModel {
+                id,
+                name,
+                tier,
+                context_window,
+            })
+        })
+        .collect();
 
     Ok(models)
 }
@@ -75,10 +93,12 @@ fn infer_tier_from_name(id: &str, name: Option<&str>) -> Option<String> {
 fn infer_tier_from_pricing(model: &serde_json::Value) -> Option<String> {
     if let Some(pricing) = model.get("pricing") {
         let prompt_cost = pricing.get("prompt").and_then(|v| {
-            v.as_f64().or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+            v.as_f64()
+                .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
         });
         let completion_cost = pricing.get("completion").and_then(|v| {
-            v.as_f64().or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+            v.as_f64()
+                .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
         });
 
         match (prompt_cost, completion_cost) {
@@ -93,30 +113,38 @@ fn infer_tier_from_pricing(model: &serde_json::Value) -> Option<String> {
 }
 
 fn extract_context_window(model: &serde_json::Value) -> Option<u32> {
-    for key in &["context_length", "max_context", "context_window", "max_context_length"] {
+    for key in &[
+        "context_length",
+        "max_context",
+        "context_window",
+        "max_context_length",
+    ] {
         if let Some(val) = model.get(*key) {
             if let Some(n) = val.as_u64() {
                 return Some(n as u32);
             }
-            if let Some(s) = val.as_str() {
-                if let Ok(n) = s.parse::<u32>() {
-                    return Some(n);
-                }
+            if let Some(s) = val.as_str()
+                && let Ok(n) = s.parse::<u32>()
+            {
+                return Some(n);
             }
         }
     }
     None
 }
 
-fn apply_auth(mut req: reqwest::RequestBuilder, runtime: &ProviderRuntime) -> Result<reqwest::RequestBuilder> {
+fn apply_auth(
+    mut req: reqwest::RequestBuilder,
+    runtime: &ProviderRuntime,
+) -> Result<reqwest::RequestBuilder> {
     if let (Some(header), Some(prefix)) = (&runtime.auth_header, &runtime.auth_prefix) {
         if let Some(key) = &runtime.api_key {
             req = req.header(header.as_str(), format!("{prefix}{key}"));
         }
-    } else if let Some(header) = &runtime.auth_header {
-        if let Some(key) = &runtime.api_key {
-            req = req.header(header.as_str(), key.as_str());
-        }
+    } else if let Some(header) = &runtime.auth_header
+        && let Some(key) = &runtime.api_key
+    {
+        req = req.header(header.as_str(), key.as_str());
     }
     Ok(req)
 }
@@ -127,7 +155,11 @@ pub async fn chat_completion_streaming(
     model: &str,
     thinking: &ThinkingConfig,
 ) -> Result<impl futures_util::Stream<Item = std::result::Result<serde_json::Value, BimoError>>> {
-    let url = format!("{}{}", runtime.base_url.trim_end_matches('/'), runtime.chat_endpoint);
+    let url = format!(
+        "{}{}",
+        runtime.base_url.trim_end_matches('/'),
+        runtime.chat_endpoint
+    );
 
     let mut body = build_request_body(runtime, messages, model, thinking)?;
     if let Some(obj) = body.as_object_mut() {
@@ -138,13 +170,19 @@ pub async fn chat_completion_streaming(
     req = apply_auth(req, runtime)?;
 
     let resp = req.send().await.map_err(|e| {
-        BimoError::Network(format!("streaming chat request to {} failed: {e}", runtime.id))
+        BimoError::Network(format!(
+            "streaming chat request to {} failed: {e}",
+            runtime.id
+        ))
     })?;
 
     let status = resp.status();
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
-        return Err(BimoError::Provider(format!("streaming chat failed ({}): {}", status, body)));
+        return Err(BimoError::Provider(format!(
+            "streaming chat failed ({}): {}",
+            status, body
+        )));
     }
 
     let _provider_id = runtime.id.clone();
@@ -185,11 +223,19 @@ pub async fn chat_completion_streaming(
     Ok(stream)
 }
 
-pub fn extract_stream_delta(chunk: &serde_json::Value, format: &RequestBodyFormat) -> Option<String> {
+pub fn extract_stream_delta(
+    chunk: &serde_json::Value,
+    format: &RequestBodyFormat,
+) -> Option<String> {
     match format {
-        RequestBodyFormat::OpenAi => {
-            chunk.get("choices")?.as_array()?.first()?.get("delta")?.get("content")?.as_str().map(String::from)
-        }
+        RequestBodyFormat::OpenAi => chunk
+            .get("choices")?
+            .as_array()?
+            .first()?
+            .get("delta")?
+            .get("content")?
+            .as_str()
+            .map(String::from),
         RequestBodyFormat::Anthropic => {
             let type_str = chunk.get("type")?.as_str()?;
             if type_str == "content_block_delta" {
@@ -209,26 +255,31 @@ pub fn build_request_body(
 ) -> Result<serde_json::Value> {
     match runtime.request_body_format {
         RequestBodyFormat::OpenAi => {
-            let msgs: Vec<serde_json::Value> = messages.iter().map(|m| {
-                serde_json::json!({ "role": m.role, "content": m.content })
-            }).collect();
+            let msgs: Vec<serde_json::Value> = messages
+                .iter()
+                .map(|m| serde_json::json!({ "role": m.role, "content": m.content }))
+                .collect();
             let mut body = serde_json::json!({
                 "model": model,
                 "messages": msgs,
             });
-            if thinking.enabled {
-                if let Some(ref effort) = thinking.reasoning_effort {
-                    body.as_object_mut().unwrap().insert("reasoning_effort".into(), serde_json::json!(effort));
-                }
+            if thinking.enabled
+                && let Some(ref effort) = thinking.reasoning_effort
+            {
+                body.as_object_mut()
+                    .unwrap()
+                    .insert("reasoning_effort".into(), serde_json::json!(effort));
             }
             Ok(body)
         }
         RequestBodyFormat::Anthropic => {
-            let system_text: Vec<String> = messages.iter()
+            let system_text: Vec<String> = messages
+                .iter()
                 .filter(|m| m.role == "system")
                 .map(|m| m.content.clone())
                 .collect();
-            let non_system: Vec<serde_json::Value> = messages.iter()
+            let non_system: Vec<serde_json::Value> = messages
+                .iter()
                 .filter(|m| m.role != "system")
                 .map(|m| serde_json::json!({ "role": m.role, "content": m.content }))
                 .collect();
@@ -238,14 +289,19 @@ pub fn build_request_body(
                 "max_tokens": 8192,
             });
             if !system_text.is_empty() {
-                body.as_object_mut().unwrap().insert("system".into(), serde_json::json!(system_text.join("\n")));
+                body.as_object_mut()
+                    .unwrap()
+                    .insert("system".into(), serde_json::json!(system_text.join("\n")));
             }
             if thinking.enabled {
                 let budget = thinking.budget_tokens.unwrap_or(10000);
-                body.as_object_mut().unwrap().insert("thinking".into(), serde_json::json!({
-                    "type": "enabled",
-                    "budget_tokens": budget,
-                }));
+                body.as_object_mut().unwrap().insert(
+                    "thinking".into(),
+                    serde_json::json!({
+                        "type": "enabled",
+                        "budget_tokens": budget,
+                    }),
+                );
             }
             Ok(body)
         }
@@ -254,7 +310,8 @@ pub fn build_request_body(
 
 pub fn parse_chat_response(raw: &serde_json::Value) -> Result<ChatCompletionResponse> {
     // Try OpenAI format
-    if let Some(content) = raw.get("choices")
+    if let Some(content) = raw
+        .get("choices")
         .and_then(|c| c.as_array())
         .and_then(|a| a.first())
         .and_then(|c| c.get("message"))
@@ -269,7 +326,12 @@ pub fn parse_chat_response(raw: &serde_json::Value) -> Result<ChatCompletionResp
                 total_tokens: u.get("total_tokens")?.as_u64()? as u32,
             })
         });
-        return Ok(ChatCompletionResponse { content: content.to_string(), thinking: None, model, usage });
+        return Ok(ChatCompletionResponse {
+            content: content.to_string(),
+            thinking: None,
+            model,
+            usage,
+        });
     }
 
     // Try Anthropic format
@@ -295,15 +357,26 @@ pub fn parse_chat_response(raw: &serde_json::Value) -> Result<ChatCompletionResp
         let usage = raw.get("usage").and_then(|u| {
             let input = u.get("input_tokens")?.as_u64()? as u32;
             let output = u.get("output_tokens")?.as_u64()? as u32;
-            Some(UsageInfo { prompt_tokens: input, completion_tokens: output, total_tokens: input + output })
+            Some(UsageInfo {
+                prompt_tokens: input,
+                completion_tokens: output,
+                total_tokens: input + output,
+            })
         });
         return Ok(ChatCompletionResponse {
             content: text_parts.join(""),
-            thinking: if thinking_parts.is_empty() { None } else { Some(thinking_parts.join("\n")) },
+            thinking: if thinking_parts.is_empty() {
+                None
+            } else {
+                Some(thinking_parts.join("\n"))
+            },
             model,
             usage,
         });
     }
 
-    Err(BimoError::Serialization(format!("unable to parse chat response: {}", serde_json::to_string(raw).unwrap_or_default())))
+    Err(BimoError::Serialization(format!(
+        "unable to parse chat response: {}",
+        serde_json::to_string(raw).unwrap_or_default()
+    )))
 }

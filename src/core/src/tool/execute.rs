@@ -2,18 +2,90 @@ use std::path::Path;
 
 use tokio::time::Duration;
 
+use crate::todo::{TodoList, TodoStatus};
+
 use super::ParsedToolCall;
 
 pub type ToolResult = std::result::Result<String, String>;
 
-pub async fn execute_tool(call: &ParsedToolCall) -> ToolResult {
+pub async fn execute_tool(call: &ParsedToolCall, todos: &mut TodoList) -> ToolResult {
     match call.name.as_str() {
         "read_file" => execute_read_file(call).await,
         "edit_file" => execute_edit_file(call).await,
         "write_file" => execute_write_file(call).await,
         "run_command" => execute_run_command(call).await,
-        "manage_todo" => Ok("Todo management not implemented in core, handle at client level".into()),
+        "manage_todo" => execute_manage_todo(call, todos).await,
         _ => Err(format!("Unknown tool: {}", call.name)),
+    }
+}
+
+async fn execute_manage_todo(call: &ParsedToolCall, todos: &mut TodoList) -> ToolResult {
+    let action = call
+        .get_arg_string("action")
+        .ok_or_else(|| "Missing required 'action' argument".to_string())?;
+
+    match action.as_str() {
+        "add" => {
+            let description = call
+                .get_arg_string("description")
+                .ok_or_else(|| "Missing 'description' argument for add action".to_string())?;
+            let item = todos.add(&description);
+            Ok(format!("Added todo [{}]: {}", item.id, item.description))
+        }
+        "update" => {
+            let id_str = call
+                .get_arg_string("id")
+                .ok_or_else(|| "Missing 'id' argument for update action".to_string())?;
+            let id: u32 = id_str
+                .parse()
+                .map_err(|_| format!("Invalid todo id: {}", id_str))?;
+
+            if let Some(description) = call.get_arg_string("description") {
+                todos
+                    .update_description(id, &description)
+                    .ok_or_else(|| format!("Todo [{}] not found", id))?;
+            }
+            if let Some(status_str) = call.get_arg_string("status") {
+                let status = match status_str.as_str() {
+                    "pending" => TodoStatus::Pending,
+                    "in_progress" => TodoStatus::InProgress,
+                    "done" => TodoStatus::Done,
+                    _ => {
+                        return Err(format!(
+                            "Invalid status '{}'. Must be pending, in_progress, or done",
+                            status_str
+                        ));
+                    }
+                };
+                todos
+                    .update_status(id, status)
+                    .ok_or_else(|| format!("Todo [{}] not found", id))?;
+            }
+
+            let item = todos
+                .get(id)
+                .ok_or_else(|| format!("Todo [{}] not found", id))?;
+            Ok(format!(
+                "Updated todo [{}]: {} ({})",
+                item.id, item.description, item.status
+            ))
+        }
+        "remove" => {
+            let id_str = call
+                .get_arg_string("id")
+                .ok_or_else(|| "Missing 'id' argument for remove action".to_string())?;
+            let id: u32 = id_str
+                .parse()
+                .map_err(|_| format!("Invalid todo id: {}", id_str))?;
+            todos
+                .remove(id)
+                .ok_or_else(|| format!("Todo [{}] not found", id))?;
+            Ok(format!("Removed todo [{}]", id))
+        }
+        _ => Err(format!(
+            "Unknown action '{}'. Must be add, update, or remove",
+            action
+        )),
     }
 }
 
@@ -67,10 +139,7 @@ async fn execute_edit_file(call: &ParsedToolCall) -> ToolResult {
         .map_err(|e| format!("Failed to write '{}': {}", path, e))?;
 
     let diff = count_diff_lines(&content, &new_content);
-    Ok(format!(
-        "Edited '{}' ({} line(s) changed).",
-        path, diff
-    ))
+    Ok(format!("Edited '{}' ({} line(s) changed).", path, diff))
 }
 
 async fn execute_write_file(call: &ParsedToolCall) -> ToolResult {
@@ -92,10 +161,7 @@ async fn execute_write_file(call: &ParsedToolCall) -> ToolResult {
         .map_err(|e| format!("Failed to write '{}': {}", path, e))?;
 
     let line_count = content.lines().count();
-    Ok(format!(
-        "Written {} lines to '{}'.",
-        line_count, path
-    ))
+    Ok(format!("Written {} lines to '{}'.", line_count, path))
 }
 
 async fn execute_run_command(call: &ParsedToolCall) -> ToolResult {

@@ -1,4 +1,4 @@
-use crate::config::{read_json, write_json, ensure_config_dir};
+use crate::config::{ensure_config_dir, read_json, write_json};
 use crate::error::{BimoError, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -55,11 +55,20 @@ impl ProvidersConfig {
         write_json(PROVIDERS_FILE, self)
     }
 
-    pub fn configure_provider(&mut self, id: &str, base_url: Option<String>, api_key: Option<String>, default_base_url: &str) -> Result<()> {
-        let entry = self.configured.entry(id.to_string()).or_insert_with(|| ProviderPersistedConfig {
-            base_url: default_base_url.to_string(),
-            api_key: None,
-        });
+    pub fn configure_provider(
+        &mut self,
+        id: &str,
+        base_url: Option<String>,
+        api_key: Option<String>,
+        default_base_url: &str,
+    ) -> Result<()> {
+        let entry =
+            self.configured
+                .entry(id.to_string())
+                .or_insert_with(|| ProviderPersistedConfig {
+                    base_url: default_base_url.to_string(),
+                    api_key: None,
+                });
         if let Some(url) = base_url {
             entry.base_url = url;
         }
@@ -74,7 +83,10 @@ impl ProvidersConfig {
 
     pub fn add_custom(&mut self, cp: CustomProviderConfig) -> Result<()> {
         if self.custom.iter().any(|p| p.id == cp.id) {
-            return Err(BimoError::Provider(format!("a provider with id '{}' already exists", cp.id)));
+            return Err(BimoError::Provider(format!(
+                "a provider with id '{}' already exists",
+                cp.id
+            )));
         }
         self.custom.push(cp);
         self.save()

@@ -1,4 +1,4 @@
-use crate::config::{read_json, write_json, ensure_config_dir};
+use crate::config::{ensure_config_dir, read_json, write_json};
 use crate::error::Result;
 use serde::{Deserialize, Serialize};
 
@@ -14,7 +14,7 @@ pub struct ThinkingConfig {
     pub reasoning_effort: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Settings {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub selected_provider: Option<String>,
@@ -25,17 +25,6 @@ pub struct Settings {
     /// Max tool call iterations per chat request. None = no limit.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_tool_iterations: Option<usize>,
-}
-
-impl Default for Settings {
-    fn default() -> Self {
-        Self {
-            selected_provider: None,
-            selected_model: None,
-            thinking: ThinkingConfig::default(),
-            max_tool_iterations: None,
-        }
-    }
 }
 
 impl Settings {

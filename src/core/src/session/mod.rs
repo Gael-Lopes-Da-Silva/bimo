@@ -130,18 +130,21 @@ impl Session {
     }
 
     pub fn to_chat_messages(&self) -> Vec<crate::provider::ChatMessage> {
-        self.messages.iter().map(|m| {
-            let role = match m.role {
-                Role::System => "system",
-                Role::User => "user",
-                Role::Assistant => "assistant",
-                Role::Tool => "user",
-            };
-            crate::provider::ChatMessage {
-                role: role.into(),
-                content: m.content.clone(),
-            }
-        }).collect()
+        self.messages
+            .iter()
+            .map(|m| {
+                let role = match m.role {
+                    Role::System => "system",
+                    Role::User => "user",
+                    Role::Assistant => "assistant",
+                    Role::Tool => "user",
+                };
+                crate::provider::ChatMessage {
+                    role: role.into(),
+                    content: m.content.clone(),
+                }
+            })
+            .collect()
     }
 
     pub fn clear(&mut self) {
@@ -166,7 +169,9 @@ impl Session {
     pub fn fork(&self, index: usize) -> crate::error::Result<Self> {
         if index >= self.messages.len() {
             return Err(crate::error::BimoError::Session(format!(
-                "index {} out of range (session has {} messages)", index, self.messages.len()
+                "index {} out of range (session has {} messages)",
+                index,
+                self.messages.len()
             )));
         }
         let mut forked = Self::new();
@@ -179,7 +184,9 @@ impl Session {
     pub fn revert(&mut self, index: usize) -> crate::error::Result<()> {
         if index >= self.messages.len() {
             return Err(crate::error::BimoError::Session(format!(
-                "index {} out of range (session has {} messages)", index, self.messages.len()
+                "index {} out of range (session has {} messages)",
+                index,
+                self.messages.len()
             )));
         }
         self.messages.truncate(index + 1);
@@ -189,7 +196,9 @@ impl Session {
     }
 
     pub fn compact(&mut self, summary: &str) {
-        let system_messages: Vec<Message> = self.messages.iter()
+        let system_messages: Vec<Message> = self
+            .messages
+            .iter()
             .filter(|m| m.role == Role::System)
             .cloned()
             .collect();

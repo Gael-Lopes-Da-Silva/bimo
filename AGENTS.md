@@ -45,6 +45,7 @@ Built-in providers:
 - `anthropic` (requires_api_key, Anthropic format)
 - `openrouter` (requires_api_key, OpenAi format)
 - `lmstudio` (no key, OpenAi format)
+- `ollama` (no key, OpenAi format)
 - Custom providers (user-defined, default to OpenAi format)
 
 Key types: `ProviderInfo`, `ProviderRuntime` (base_url, api_key,

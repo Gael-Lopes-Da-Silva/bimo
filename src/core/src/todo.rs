@@ -147,7 +147,10 @@ impl TodoList {
         let in_progress = self.in_progress().len();
         let done = self.done().len();
         let total = self.items.len();
-        format!("{} todos ({} pending, {} in progress, {} done)", total, pending, in_progress, done)
+        format!(
+            "{} todos ({} pending, {} in progress, {} done)",
+            total, pending, in_progress, done
+        )
     }
 
     pub fn render_full(&self) -> String {
@@ -161,19 +164,34 @@ impl TodoList {
         if !in_progress.is_empty() {
             out.push_str("In Progress:\n");
             for item in &in_progress {
-                out.push_str(&format!("  [{}] {} (updated {})\n", item.id, item.description, item.updated_at.format("%H:%M UTC")));
+                out.push_str(&format!(
+                    "  [{}] {} (updated {})\n",
+                    item.id,
+                    item.description,
+                    item.updated_at.format("%H:%M UTC")
+                ));
             }
         }
         if !pending.is_empty() {
             out.push_str("Pending:\n");
             for item in &pending {
-                out.push_str(&format!("  [{}] {} (created {})\n", item.id, item.description, item.created_at.format("%H:%M UTC")));
+                out.push_str(&format!(
+                    "  [{}] {} (created {})\n",
+                    item.id,
+                    item.description,
+                    item.created_at.format("%H:%M UTC")
+                ));
             }
         }
         if !done.is_empty() {
             out.push_str("Done:\n");
             for item in &done {
-                out.push_str(&format!("  [{}] {} (completed {})\n", item.id, item.description, item.updated_at.format("%H:%M UTC")));
+                out.push_str(&format!(
+                    "  [{}] {} (completed {})\n",
+                    item.id,
+                    item.description,
+                    item.updated_at.format("%H:%M UTC")
+                ));
             }
         }
         out

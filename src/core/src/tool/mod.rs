@@ -23,27 +23,6 @@ pub struct Tool {
 }
 
 impl Tool {
-    pub fn to_xml(&self) -> String {
-        let mut xml = format!(
-            "<tool name=\"{name}\" description=\"{desc}\">\n",
-            name = self.name,
-            desc = self.description
-        );
-        xml.push_str("  <parameters>\n");
-        for p in &self.parameters {
-            xml.push_str(&format!(
-                "    <parameter name=\"{name}\" type=\"{ptype}\" required=\"{req}\">{desc}</parameter>\n",
-                name = p.name,
-                ptype = p.param_type,
-                req = if p.required { "true" } else { "false" },
-                desc = p.description,
-            ));
-        }
-        xml.push_str("  </parameters>\n");
-        xml.push_str("</tool>");
-        xml
-    }
-
     pub fn to_json_schema(&self) -> serde_json::Value {
         let mut properties = serde_json::Map::new();
         let mut required = Vec::new();
@@ -116,14 +95,6 @@ impl ToolRegistry {
         &self.tools
     }
 
-    pub fn render_xml(&self) -> String {
-        self.tools
-            .iter()
-            .map(|t| t.to_xml())
-            .collect::<Vec<_>>()
-            .join("\n\n")
-    }
-
     pub fn render_json_schemas(&self) -> Vec<serde_json::Value> {
         self.tools.iter().map(|t| t.to_json_schema()).collect()
     }
@@ -147,9 +118,8 @@ impl ToolRegistry {
             Ok(calls
                 .into_iter()
                 .map(|tc: ParserToolCall| {
-                    let args: serde_json::Value =
-                        serde_json::from_str(&tc.function.arguments)
-                            .unwrap_or(serde_json::Value::Object(Default::default()));
+                    let args: serde_json::Value = serde_json::from_str(&tc.function.arguments)
+                        .unwrap_or(serde_json::Value::Object(Default::default()));
                     ParsedToolCall {
                         name: tc.function.name,
                         arguments: args,

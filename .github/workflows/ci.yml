@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        folder: [api, tui]
+        folder: [src/core, src/api, src/rpc]
     defaults:
       run:
         working-directory: ${{ matrix.folder }}
@@ -34,7 +34,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        folder: [api, tui]
+        folder: [src/core, src/api, src/rpc]
     defaults:
       run:
         working-directory: ${{ matrix.folder }}
