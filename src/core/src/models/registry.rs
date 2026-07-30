@@ -47,6 +47,33 @@ impl ModelRegistry {
         None
     }
 
+    /// Checks if a model supports given input/output modalities (e.g. text, image).
+    pub async fn model_capabilities(&self, model_id: &str) -> Option<(Vec<String>, Vec<String>)> {
+        let (_pid, model) = self.find_model(model_id).await?;
+        model
+            .modalities
+            .as_ref()
+            .map(|m| (m.input.clone(), m.output.clone()))
+    }
+
+    /// Returns true if the model supports text input and output.
+    pub async fn supports_text(&self, model_id: &str) -> bool {
+        if let Some((inputs, outputs)) = self.model_capabilities(model_id).await {
+            inputs.contains(&"text".to_string()) && outputs.contains(&"text".to_string())
+        } else {
+            false
+        }
+    }
+
+    /// Returns true if the model supports image input.
+    pub async fn supports_image_input(&self, model_id: &str) -> bool {
+        if let Some((inputs, _)) = self.model_capabilities(model_id).await {
+            inputs.contains(&"image".to_string())
+        } else {
+            false
+        }
+    }
+
     /// Total number of models across all providers.
     pub async fn model_count(&self) -> usize {
         let map = self.providers.read().await;

@@ -4,6 +4,7 @@ use std::collections::HashMap;
 
 const SYSTEM_PROMPT: &str = include_str!("prompts/SYSTEM.md");
 const SUMMARY_PROMPT: &str = include_str!("prompts/SUMMARY.md");
+const SESSION_NAME_PROMPT: &str = include_str!("prompts/SESSION_NAME.md");
 const COMPACT_PROMPT: &str = include_str!("prompts/COMPACT.md");
 
 /// Renders a template string by replacing `{{KEY}}` placeholders with values.
@@ -85,6 +86,12 @@ impl PromptEngine {
         let mut vars = HashMap::new();
         vars.insert("SUMMARY".to_string(), summary.to_string());
         render_template(SUMMARY_PROMPT, &vars)
+    }
+
+    pub fn render_session_name(context: &str) -> String {
+        let mut vars = HashMap::new();
+        vars.insert("CONTEXT".to_string(), context.to_string());
+        render_template(SESSION_NAME_PROMPT, &vars)
     }
 
     pub fn render_compact(conversation: &str) -> String {

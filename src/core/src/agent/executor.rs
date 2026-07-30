@@ -212,6 +212,50 @@ impl Agent {
         Ok(rx)
     }
 
+    /// Generates a concise session name/title using the model and session context.
+    pub async fn generate_session_name(&mut self) -> Result<String> {
+        let runner = self
+            .runner
+            .as_ref()
+            .ok_or_else(|| crate::error::BimoError::Agent("Agent already consumed".to_string()))?;
+
+        let conversation = if self.session.messages.is_empty() {
+            return Err(crate::error::BimoError::Agent(
+                "Cannot generate session name: no messages in session".to_string(),
+            ));
+        } else {
+            PromptEngine::format_messages(&self.session.messages)
+        };
+        let name_prompt = PromptEngine::render_session_name(&conversation);
+
+        let model = runner.build_model().await.map_err(|e| {
+            crate::error::BimoError::Agent(format!("Session naming model build failed: {}", e))
+        })?;
+        match model {
+            ModelProvider::OpenAI(model) => self.name_with_model(*model, &name_prompt).await,
+            ModelProvider::Anthropic(model) => self.name_with_model(*model, &name_prompt).await,
+            ModelProvider::Google(model) => self.name_with_model(*model, &name_prompt).await,
+        }
+    }
+
+    async fn name_with_model<M>(&mut self, model: M, name_prompt: &str) -> Result<String>
+    where
+        M: LanguageModel + TextInputSupport,
+    {
+        let mut request = LanguageModelRequest::<M>::builder()
+            .model(model)
+            .prompt(name_prompt)
+            .build();
+
+        let response = request
+            .generate_text()
+            .await
+            .map_err(|e| crate::error::BimoError::Agent(format!("Session naming failed: {}", e)))?;
+
+        let title = response.text().unwrap_or_default().trim().to_string();
+        Ok(title)
+    }
+
     /// Compacts the current session's message history into a summary.
     ///
     /// 1. Renders COMPACT.md with the full conversation.
@@ -302,17 +346,39 @@ impl AgentRunner {
         Ok(())
     }
 
+    /// Writes an event to the debug log file when debug mode is enabled.
+    fn persist_event(&self, event: &AgentEvent) {
+        if self.debug {
+            let path = Session::sessions_dir().join(format!("{}_events.json", self.session_id));
+            if let Some(parent) = path.parent()
+                && let Err(e) = std::fs::create_dir_all(parent)
+            {
+                tracing::warn!("Failed to create debug log directory: {e}");
+                return;
+            }
+            if let Ok(mut file) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+            {
+                use std::io::Write;
+                let _ = writeln!(file, "{}", serde_json::to_string(event).unwrap_or_default());
+            }
+        }
+    }
+
+    /// Sends an event and persists it to the debug log when enabled.
+    fn emit_event(&self, event: AgentEvent, tx: &broadcast::Sender<AgentEvent>) {
+        self.persist_event(&event);
+        let _ = tx.send(event);
+    }
+
     /// Runs the model with streaming, emitting [`AgentEvent`]s into the channel.
     async fn execute_model_stream<M: LanguageModel + TextInputSupport + ToolCallSupport>(
         &self,
         model: M,
         tx: broadcast::Sender<AgentEvent>,
     ) {
-        let debug_path = if self.debug {
-            Some(Session::sessions_dir().join(format!("{}_events.json", self.session_id)))
-        } else {
-            None
-        };
         let mut request = self.build_request(model);
         match request.stream_text().await {
             Ok(response) => {
@@ -320,190 +386,33 @@ impl AgentRunner {
                 while let Some(chunk) = stream.next().await {
                     match chunk {
                         LanguageModelStreamChunkType::Text(text) => {
-                            let event = AgentEvent::TextDelta(text);
-                            if self.debug {
-                                if let Some(path) = &debug_path {
-                                    let mut file = std::fs::OpenOptions::new()
-                                        .create(true)
-                                        .append(true)
-                                        .open(path)
-                                        .unwrap();
-                                    use std::io::Write;
-                                    let _ = writeln!(
-                                        file,
-                                        "{}",
-                                        serde_json::to_string(&event).unwrap_or_default()
-                                    );
-                                }
-                            }
-                            let _ = tx.send(event);
+                            self.emit_event(AgentEvent::TextDelta(text), &tx);
                         }
                         LanguageModelStreamChunkType::Reasoning(text) => {
-                            let event = AgentEvent::ReasoningDelta(text);
-                            if self.debug {
-                                if let Some(path) = &debug_path {
-                                    let mut file = std::fs::OpenOptions::new()
-                                        .create(true)
-                                        .append(true)
-                                        .open(path)
-                                        .unwrap();
-                                    use std::io::Write;
-                                    let _ = writeln!(
-                                        file,
-                                        "{}",
-                                        serde_json::to_string(&event).unwrap_or_default()
-                                    );
-                                }
-                            }
-                            let _ = tx.send(event);
+                            self.emit_event(AgentEvent::ReasoningDelta(text), &tx);
                         }
                         LanguageModelStreamChunkType::End(_) => {
-                            let event = AgentEvent::Done;
-                            if self.debug {
-                                if let Some(path) = &debug_path {
-                                    let mut file = std::fs::OpenOptions::new()
-                                        .create(true)
-                                        .append(true)
-                                        .open(path)
-                                        .unwrap();
-                                    use std::io::Write;
-                                    let _ = writeln!(
-                                        file,
-                                        "{}",
-                                        serde_json::to_string(&event).unwrap_or_default()
-                                    );
-                                }
-                            }
-                            let _ = tx.send(event);
+                            self.emit_event(AgentEvent::Done, &tx);
                             return;
                         }
                         LanguageModelStreamChunkType::Failed(err) => {
-                            let event = AgentEvent::Error(err);
-                            if self.debug {
-                                if let Some(path) = &debug_path {
-                                    let mut file = std::fs::OpenOptions::new()
-                                        .create(true)
-                                        .append(true)
-                                        .open(path)
-                                        .unwrap();
-                                    use std::io::Write;
-                                    let _ = writeln!(
-                                        file,
-                                        "{}",
-                                        serde_json::to_string(&event).unwrap_or_default()
-                                    );
-                                }
-                            }
-                            let done = AgentEvent::Done;
-                            if self.debug {
-                                if let Some(path) = &debug_path {
-                                    let mut file = std::fs::OpenOptions::new()
-                                        .create(true)
-                                        .append(true)
-                                        .open(path)
-                                        .unwrap();
-                                    use std::io::Write;
-                                    let _ = writeln!(
-                                        file,
-                                        "{}",
-                                        serde_json::to_string(&done).unwrap_or_default()
-                                    );
-                                }
-                            }
-                            let _ = tx.send(event);
-                            let _ = tx.send(done);
+                            self.emit_event(AgentEvent::Error(err), &tx);
+                            self.emit_event(AgentEvent::Done, &tx);
                             return;
                         }
                         LanguageModelStreamChunkType::Incomplete(msg) => {
-                            let event = AgentEvent::TextDelta(msg);
-                            if self.debug {
-                                if let Some(path) = &debug_path {
-                                    let mut file = std::fs::OpenOptions::new()
-                                        .create(true)
-                                        .append(true)
-                                        .open(path)
-                                        .unwrap();
-                                    use std::io::Write;
-                                    let _ = writeln!(
-                                        file,
-                                        "{}",
-                                        serde_json::to_string(&event).unwrap_or_default()
-                                    );
-                                }
-                            }
-                            let done = AgentEvent::Done;
-                            if self.debug {
-                                if let Some(path) = &debug_path {
-                                    let mut file = std::fs::OpenOptions::new()
-                                        .create(true)
-                                        .append(true)
-                                        .open(path)
-                                        .unwrap();
-                                    use std::io::Write;
-                                    let _ = writeln!(
-                                        file,
-                                        "{}",
-                                        serde_json::to_string(&done).unwrap_or_default()
-                                    );
-                                }
-                            }
-                            let _ = tx.send(event);
-                            let _ = tx.send(done);
+                            self.emit_event(AgentEvent::TextDelta(msg), &tx);
+                            self.emit_event(AgentEvent::Done, &tx);
                             return;
                         }
                         _ => {}
                     }
                 }
-                let event = AgentEvent::Done;
-                if self.debug {
-                    if let Some(path) = &debug_path {
-                        let mut file = std::fs::OpenOptions::new()
-                            .create(true)
-                            .append(true)
-                            .open(path)
-                            .unwrap();
-                        use std::io::Write;
-                        let _ = writeln!(
-                            file,
-                            "{}",
-                            serde_json::to_string(&event).unwrap_or_default()
-                        );
-                    }
-                }
-                let _ = tx.send(event);
+                self.emit_event(AgentEvent::Done, &tx);
             }
             Err(e) => {
-                let error_event = AgentEvent::Error(e.to_string());
-                if self.debug {
-                    if let Some(path) = &debug_path {
-                        let mut file = std::fs::OpenOptions::new()
-                            .create(true)
-                            .append(true)
-                            .open(path)
-                            .unwrap();
-                        use std::io::Write;
-                        let _ = writeln!(
-                            file,
-                            "{}",
-                            serde_json::to_string(&error_event).unwrap_or_default()
-                        );
-                    }
-                }
-                let done = AgentEvent::Done;
-                if self.debug {
-                    if let Some(path) = &debug_path {
-                        let mut file = std::fs::OpenOptions::new()
-                            .create(true)
-                            .append(true)
-                            .open(path)
-                            .unwrap();
-                        use std::io::Write;
-                        let _ =
-                            writeln!(file, "{}", serde_json::to_string(&done).unwrap_or_default());
-                    }
-                }
-                let _ = tx.send(error_event);
-                let _ = tx.send(done);
+                self.emit_event(AgentEvent::Error(e.to_string()), &tx);
+                self.emit_event(AgentEvent::Done, &tx);
             }
         }
     }
@@ -530,32 +439,11 @@ impl AgentRunner {
 
     /// Runs the agent with streaming — emits [`AgentEvent`]s into the channel.
     async fn execute_stream(self, tx: broadcast::Sender<AgentEvent>) {
-        let debug_path = if self.debug {
-            Some(Session::sessions_dir().join(format!("{}_events.json", self.session_id)))
-        } else {
-            None
-        };
         let model = match self.build_model().await {
             Ok(m) => m,
             Err(e) => {
-                let event = AgentEvent::Error(e);
-                if self.debug {
-                    if let Some(path) = &debug_path {
-                        let mut file = std::fs::OpenOptions::new()
-                            .create(true)
-                            .append(true)
-                            .open(path)
-                            .unwrap();
-                        use std::io::Write;
-                        let _ = writeln!(
-                            file,
-                            "{}",
-                            serde_json::to_string(&event).unwrap_or_default()
-                        );
-                    }
-                }
-                let _ = tx.send(event.clone());
-                let _ = tx.send(AgentEvent::Done);
+                self.emit_event(AgentEvent::Error(e), &tx);
+                self.emit_event(AgentEvent::Done, &tx);
                 return;
             }
         };
