@@ -38,6 +38,21 @@ impl PromptEngine {
         COMPACT_PROMPT
     }
 
+    pub fn format_messages(messages: &[crate::session::Message]) -> String {
+        messages
+            .iter()
+            .map(|m| {
+                format!(
+                    "[{}] {}\n{}",
+                    m.role,
+                    m.timestamp.format("%Y-%m-%d %H:%M:%S"),
+                    m.content
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    }
+
     pub fn render_system(vars: &HashMap<String, String>) -> String {
         let mut default_vars = HashMap::new();
         default_vars.insert(

@@ -11,6 +11,7 @@ use tracing::info;
 
 use crate::config::ApiFormat;
 use crate::error::Result;
+use crate::prompt::PromptEngine;
 use crate::session::Session;
 use crate::tools;
 
@@ -205,6 +206,66 @@ impl Agent {
         });
 
         Ok(rx)
+    }
+
+    /// Compacts the current session's message history into a summary.
+    ///
+    /// 1. Renders COMPACT.md with the full conversation.
+    /// 2. Calls the model (no tools, no stop condition) to get a summary.
+    /// 3. Renders SUMMARY.md with that summary.
+    /// 4. Clears session.messages.
+    /// 5. Injects the rendered summary as a system message.
+    /// 6. Persists the session.
+    ///
+    /// Returns the summary text on success.
+    pub async fn compact(&mut self) -> Result<String> {
+        let runner = self
+            .runner
+            .as_ref()
+            .ok_or_else(|| crate::error::BimoError::Agent("Agent already consumed".to_string()))?;
+
+        if self.session.messages.is_empty() {
+            return Ok(String::new());
+        }
+
+        let conversation = PromptEngine::format_messages(&self.session.messages);
+        let compact_prompt = PromptEngine::render_compact(&conversation);
+
+        let model = runner.build_model().await.map_err(|e| {
+            crate::error::BimoError::Agent(format!("Compaction model build failed: {}", e))
+        })?;
+        match model {
+            ModelProvider::OpenAI(model) => self.compact_with_model(*model, &compact_prompt).await,
+            ModelProvider::Anthropic(model) => {
+                self.compact_with_model(*model, &compact_prompt).await
+            }
+            ModelProvider::Google(model) => self.compact_with_model(*model, &compact_prompt).await,
+        }
+    }
+
+    async fn compact_with_model<M>(&mut self, model: M, conversation_prompt: &str) -> Result<String>
+    where
+        M: LanguageModel + TextInputSupport,
+    {
+        let mut request = LanguageModelRequest::<M>::builder()
+            .model(model)
+            .prompt(conversation_prompt)
+            .build();
+
+        let response = request
+            .generate_text()
+            .await
+            .map_err(|e| crate::error::BimoError::Agent(format!("Compaction failed: {}", e)))?;
+
+        let summary = response.text().unwrap_or_default();
+        let rendered_summary = PromptEngine::render_summary(&summary);
+
+        self.session.messages.clear();
+        self.session
+            .add_message("system".to_string(), rendered_summary);
+        self.session.save()?;
+
+        Ok(summary)
     }
 }
 

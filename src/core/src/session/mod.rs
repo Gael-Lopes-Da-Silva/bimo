@@ -56,6 +56,12 @@ impl Session {
         elapsed.num_hours() > ttl_hours as i64
     }
 
+    /// Clears all messages in the session and updates the timestamp.
+    pub fn clear_messages(&mut self) {
+        self.messages.clear();
+        self.updated_at = Utc::now();
+    }
+
     /// Returns the directory where session files are stored.
     pub fn sessions_dir() -> std::path::PathBuf {
         let base = dirs::config_dir().unwrap_or_else(|| std::path::PathBuf::from("~/.config"));
