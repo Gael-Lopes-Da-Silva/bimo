@@ -1,36 +1,6 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LocalProvider {
-    pub name: String,
-    pub base_url: String,
-    #[serde(default)]
-    pub models: Vec<String>,
-}
-
-impl LocalProvider {
-    pub fn ollama() -> Self {
-        Self {
-            name: "ollama".to_string(),
-            base_url: "http://localhost:11434/v1".to_string(),
-            models: vec![],
-        }
-    }
-
-    pub fn lmstudio() -> Self {
-        Self {
-            name: "lmstudio".to_string(),
-            base_url: "http://localhost:1234/v1".to_string(),
-            models: vec![],
-        }
-    }
-}
-
-fn default_local_providers() -> Vec<LocalProvider> {
-    vec![LocalProvider::ollama(), LocalProvider::lmstudio()]
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
     #[serde(default = "default_session_ttl_hours")]
     pub session_ttl_hours: u64,
@@ -49,9 +19,6 @@ pub struct Settings {
 
     #[serde(default)]
     pub default_model: Option<String>,
-
-    #[serde(default = "default_local_providers")]
-    pub local_providers: Vec<LocalProvider>,
 }
 
 fn default_session_ttl_hours() -> u64 {
@@ -79,7 +46,6 @@ impl Default for Settings {
             max_steps: default_max_steps(),
             default_provider: None,
             default_model: None,
-            local_providers: default_local_providers(),
         }
     }
 }

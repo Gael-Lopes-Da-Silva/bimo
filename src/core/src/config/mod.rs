@@ -1,5 +1,5 @@
 pub mod providers;
 pub mod settings;
 
-pub use providers::{ProviderConfig, ProvidersFile};
-pub use settings::{LocalProvider, Settings};
+pub use providers::{LocalProvider, ProviderConfig, ProvidersFile};
+pub use settings::Settings;

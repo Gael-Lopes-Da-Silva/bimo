@@ -5,7 +5,7 @@ use tokio::sync::{Mutex, RwLock};
 use tokio::time::{Duration, interval};
 use tracing::{info, warn};
 
-use super::session_impl::Session;
+use super::Session;
 use crate::config::Settings;
 
 pub struct SessionManager {

@@ -1,12 +1,19 @@
-mod template;
-
 use std::collections::HashMap;
-
-pub use template::render_template;
 
 const SYSTEM_PROMPT: &str = include_str!("prompts/SYSTEM.md");
 const SUMMARY_PROMPT: &str = include_str!("prompts/SUMMARY.md");
 const COMPACT_PROMPT: &str = include_str!("prompts/COMPACT.md");
+
+/// Renders a template string by replacing `{{KEY}}` placeholders with values.
+/// Unknown placeholders are left as-is.
+pub fn render_template(template: &str, vars: &HashMap<String, String>) -> String {
+    let mut result = template.to_string();
+    for (key, value) in vars {
+        let placeholder = format!("{{{{{key}}}}}");
+        result = result.replace(&placeholder, value);
+    }
+    result
+}
 
 /// Loads and renders system prompt templates embedded at compile time.
 /// Templates use `{{PLACEHOLDER}}` notation for variable substitution.
@@ -17,23 +24,18 @@ impl PromptEngine {
         Self
     }
 
-    /// Get the SYSTEM prompt template.
     pub fn system_template() -> &'static str {
         SYSTEM_PROMPT
     }
 
-    /// Get the SUMMARY prompt template.
     pub fn summary_template() -> &'static str {
         SUMMARY_PROMPT
     }
 
-    /// Get the COMPACT prompt template.
     pub fn compact_template() -> &'static str {
         COMPACT_PROMPT
     }
 
-    /// Render the system prompt with all variables.
-    /// Expected vars: `PROJECT_CONTEXT`, `TOOLS`.
     pub fn render_system(vars: &HashMap<String, String>) -> String {
         let mut default_vars = HashMap::new();
         default_vars.insert(
@@ -54,14 +56,12 @@ impl PromptEngine {
         render_template(SYSTEM_PROMPT, &default_vars)
     }
 
-    /// Render the SUMMARY template.
     pub fn render_summary(summary: &str) -> String {
         let mut vars = HashMap::new();
         vars.insert("SUMMARY".to_string(), summary.to_string());
         render_template(SUMMARY_PROMPT, &vars)
     }
 
-    /// Render the COMPACT template.
     pub fn render_compact(conversation: &str) -> String {
         let mut vars = HashMap::new();
         vars.insert("CONVERSATION".to_string(), conversation.to_string());

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use crate::agent::Agent;
 use crate::agent::executor::AgentRunner;
 use crate::agent::instructions::load_instructions;
-use crate::config::{ProviderConfig, Settings};
+use crate::config::{LocalProvider, ProviderConfig, Settings};
 use crate::error::Result;
 use crate::models::ModelRegistry;
 use crate::prompt::PromptEngine;
@@ -17,6 +17,7 @@ pub struct AgentBuilder {
     project_dir: Option<PathBuf>,
     session: Option<crate::session::Session>,
     user_prompt: Option<String>,
+    local_providers: Vec<LocalProvider>,
     max_steps: Option<usize>,
     temperature: Option<f32>,
     max_tokens: Option<u32>,
@@ -31,6 +32,7 @@ impl AgentBuilder {
             project_dir: None,
             session: None,
             user_prompt: None,
+            local_providers: Vec::new(),
             max_steps: None,
             temperature: None,
             max_tokens: None,
@@ -55,6 +57,11 @@ impl AgentBuilder {
 
     pub fn with_session(mut self, session: crate::session::Session) -> Self {
         self.session = Some(session);
+        self
+    }
+
+    pub fn with_local_providers(mut self, providers: Vec<LocalProvider>) -> Self {
+        self.local_providers = providers;
         self
     }
 
@@ -115,7 +122,7 @@ impl AgentBuilder {
             max_steps,
             temperature: self.temperature,
             max_tokens: self.max_tokens,
-            local_providers: self.settings.local_providers.clone(),
+            local_providers: self.local_providers,
             registry: self.registry,
         };
 
