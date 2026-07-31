@@ -5,6 +5,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use super::types::ModelEntry;
+use crate::error::Result;
 use crate::providers::{CloudProviderRegistry, ProviderMap};
 
 /// Queries model metadata from a shared [`ProviderMap`].
@@ -14,6 +15,7 @@ use crate::providers::{CloudProviderRegistry, ProviderMap};
 #[derive(Debug, Clone)]
 pub struct ModelRegistry {
     providers: Arc<RwLock<ProviderMap>>,
+    registry: CloudProviderRegistry,
 }
 
 impl ModelRegistry {
@@ -21,6 +23,7 @@ impl ModelRegistry {
     pub fn from_registry(registry: &CloudProviderRegistry) -> Self {
         Self {
             providers: registry.providers_ref().clone(),
+            registry: registry.clone(),
         }
     }
 
@@ -78,5 +81,11 @@ impl ModelRegistry {
     pub async fn model_count(&self) -> usize {
         let map = self.providers.read().await;
         map.values().map(|p| p.models.len()).sum()
+    }
+
+    /// Refreshes the models list of the given provider from a fresh fetch to
+    /// models.dev, updating the shared provider data and local cache.
+    pub async fn refresh(&self, provider_id: &str) -> Result<()> {
+        self.registry.refresh_provider(provider_id).await
     }
 }

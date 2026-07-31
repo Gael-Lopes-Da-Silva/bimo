@@ -60,6 +60,21 @@ impl CloudProviderRegistry {
         Ok(())
     }
 
+    /// Refreshes the entry for a single provider from models.dev, updating the
+    /// shared map and local cache. Returns an error if the provider is unknown.
+    pub async fn refresh_provider(&self, provider_id: &str) -> Result<()> {
+        let providers = self.fetch_remote().await.map_err(BimoError::Msg)?;
+        let entry = providers.get(provider_id).cloned().ok_or_else(|| {
+            BimoError::Msg(format!("Provider '{provider_id}' not found in models.dev"))
+        })?;
+        {
+            let mut map = self.providers.write().await;
+            map.insert(provider_id.to_string(), entry);
+        }
+        self.save_cache().await?;
+        Ok(())
+    }
+
     async fn fetch_remote(&self) -> std::result::Result<ProviderMap, String> {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(10))
