@@ -57,6 +57,7 @@ pub(crate) struct AgentRunner {
     pub max_tokens: Option<u32>,
     pub debug: bool,
     pub session_id: String,
+    pub disabled_tools: std::collections::BTreeSet<String>,
     pub retry_attempts: usize,
     pub retry_timeout_secs: u64,
 }
@@ -224,7 +225,7 @@ impl AgentRunner {
         &self,
         model: M,
     ) -> LanguageModelRequest<M> {
-        let tools = tools::all_tools();
+        let tools = tools::all_tools(&self.disabled_tools);
         let mut req_builder = LanguageModelRequest::<M>::builder()
             .model(model)
             .system(&self.system_prompt)

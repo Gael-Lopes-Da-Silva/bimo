@@ -2,11 +2,13 @@
 
 mod manager;
 
+use std::collections::BTreeSet;
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::tools::TodoList;
+use crate::tools::{TodoList, is_builtin};
 
 /// A single message in a session conversation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -24,6 +26,9 @@ pub struct Session {
     pub updated_at: DateTime<Utc>,
     pub messages: Vec<Message>,
     pub todo_list: TodoList,
+    /// Names of tools disabled for this session.
+    #[serde(default)]
+    pub disabled_tools: BTreeSet<String>,
     pub metadata: serde_json::Value,
 }
 
@@ -36,6 +41,7 @@ impl Session {
             updated_at: Utc::now(),
             messages: Vec::new(),
             todo_list: TodoList::new(),
+            disabled_tools: BTreeSet::new(),
             metadata: serde_json::json!({}),
         }
     }
@@ -60,6 +66,46 @@ impl Session {
     pub fn clear_messages(&mut self) {
         self.messages.clear();
         self.updated_at = Utc::now();
+    }
+
+    /// Returns the names of tools disabled for this session.
+    pub fn disabled_tools(&self) -> &BTreeSet<String> {
+        &self.disabled_tools
+    }
+
+    /// Returns `true` if the named tool is available in this session.
+    pub fn is_tool_enabled(&self, name: &str) -> bool {
+        !self.disabled_tools.contains(name)
+    }
+
+    /// Disables a tool for this session, returning `true` if it was newly disabled.
+    ///
+    /// # Errors
+    ///
+    /// Returns a `BimoError::Tool` if `name` is not a known built-in tool.
+    pub fn disable_tool(&mut self, name: &str) -> crate::Result<bool> {
+        if !is_builtin(name) {
+            return Err(crate::error::BimoError::Tool(format!(
+                "Unknown tool '{name}'"
+            )));
+        }
+        self.updated_at = Utc::now();
+        Ok(self.disabled_tools.insert(name.to_string()))
+    }
+
+    /// Enables a tool for this session, returning `true` if it was newly enabled.
+    ///
+    /// # Errors
+    ///
+    /// Returns a `BimoError::Tool` if `name` is not a known built-in tool.
+    pub fn enable_tool(&mut self, name: &str) -> crate::Result<bool> {
+        if !is_builtin(name) {
+            return Err(crate::error::BimoError::Tool(format!(
+                "Unknown tool '{name}'"
+            )));
+        }
+        self.updated_at = Utc::now();
+        Ok(self.disabled_tools.remove(name))
     }
 
     /// Returns the directory where session files are stored.

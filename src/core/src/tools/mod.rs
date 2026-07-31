@@ -16,10 +16,23 @@ pub use read_file::read_file;
 pub use run_command::run_command;
 pub use write_file::write_file;
 
+use std::collections::BTreeSet;
+
 use aisdk::core::tools::Tool;
 
-/// Returns all available tools as a [`Vec<Tool>`] for the agent.
-pub fn all_tools() -> Vec<Tool> {
+/// Returns the names of all built-in tools.
+pub fn tool_names() -> Vec<String> {
+    let empty = BTreeSet::new();
+    all_tools(&empty).into_iter().map(|t| t.name).collect()
+}
+
+/// Returns `true` if `name` matches a built-in tool.
+pub fn is_builtin(name: &str) -> bool {
+    tool_names().iter().any(|n| n == name)
+}
+
+/// Returns the built-in tools that are not disabled for the session.
+pub fn all_tools(disabled: &BTreeSet<String>) -> Vec<Tool> {
     vec![
         read_file(),
         edit_file(),
@@ -27,10 +40,13 @@ pub fn all_tools() -> Vec<Tool> {
         run_command(),
         manage_todo(),
     ]
+    .into_iter()
+    .filter(|t| !disabled.contains(&t.name))
+    .collect()
 }
 
-/// Returns a human-readable description of all available tools for the system prompt.
-pub fn describe_tools() -> String {
+/// Returns a human-readable description of the non-disabled tools for the system prompt.
+pub fn describe_tools(disabled: &BTreeSet<String>) -> String {
     let desc = vec![
         (
             "read_file",
@@ -53,6 +69,9 @@ pub fn describe_tools() -> String {
 
     let mut out = String::new();
     for (name, desc) in desc {
+        if disabled.contains(name) {
+            continue;
+        }
         out.push_str(&format!("- **{name}**: {desc}\n"));
     }
     out

@@ -193,13 +193,19 @@ impl AgentBuilder {
     pub fn build(self) -> Result<Agent> {
         let instructions = self.load_instructions();
 
+        let disabled_tools = self
+            .session
+            .as_ref()
+            .map(|s| s.disabled_tools().clone())
+            .unwrap_or_default();
+
         let provider = self
             .provider
             .ok_or_else(|| crate::error::BimoError::Config("No provider configured".to_string()))?;
 
         let model = self.model.unwrap_or_else(|| provider.id.clone());
 
-        let tools_desc = tools::describe_tools();
+        let tools_desc = tools::describe_tools(&disabled_tools);
 
         let skill_dirs = skill::default_skill_dirs(self.project_dir.as_deref());
         let skills = skill::load_skills(&skill_dirs);
@@ -236,6 +242,7 @@ impl AgentBuilder {
                 .as_ref()
                 .map(|s| s.id.clone())
                 .unwrap_or_default(),
+            disabled_tools,
             retry_attempts: self.retry_attempts.unwrap_or(self.settings.retry_attempts),
             retry_timeout_secs: self
                 .retry_timeout_secs
