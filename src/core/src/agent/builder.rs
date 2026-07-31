@@ -87,7 +87,8 @@ impl AgentBuilder {
         self
     }
 
-    /// Sets the model temperature.
+    /// Sets the model temperature on a 0.0–1.0 scale
+    /// (e.g. `0.1` for deterministic coding output).
     pub fn with_temperature(mut self, temp: f32) -> Self {
         self.temperature = Some(temp);
         self

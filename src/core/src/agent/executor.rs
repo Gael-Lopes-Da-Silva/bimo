@@ -13,7 +13,8 @@ use aisdk::core::{
 };
 use futures::StreamExt;
 use tokio::sync::{broadcast, mpsc};
-use tracing::info;
+use tokio::time::{Duration, sleep};
+use tracing::{info, warn};
 
 use crate::config::ApiFormat;
 use crate::error::Result;
@@ -51,6 +52,8 @@ pub enum AgentEvent {
     },
     /// A steering instruction was injected by the user mid-run.
     Steering(String),
+    /// A failed generation step is being retried (attempt number, error).
+    Retrying { attempt: usize, error: String },
     /// An error occurred.
     Error(String),
     /// The agent run finished.
@@ -64,7 +67,6 @@ pub struct Agent {
 }
 
 /// Internal agent runner holding all parameters needed to build and execute a model request.
-#[allow(dead_code)]
 pub(crate) struct AgentRunner {
     pub provider_name: String,
     pub provider_model: String,
@@ -89,6 +91,15 @@ impl Agent {
         super::AgentBuilder::new()
     }
 
+    /// Records which provider/model produced this run in the session metadata.
+    fn record_run_metadata(&mut self, runner: &AgentRunner) {
+        if !self.session.metadata.is_object() {
+            self.session.metadata = serde_json::json!({});
+        }
+        self.session.metadata["provider"] = serde_json::json!(runner.provider_name);
+        self.session.metadata["model"] = serde_json::json!(runner.provider_model);
+    }
+
     /// Runs the agent with streaming and returns a channel receiver.
     ///
     /// The agent is consumed (may only be run once).
@@ -103,11 +114,18 @@ impl Agent {
         let todos: tools::SharedTodoList = tools::new_shared_todolist();
         tools::init_todo_list(todos.clone());
 
-        let session_id = self.session.id.clone();
+        let log = format!(
+            "Starting agent session: {} ({} / {})",
+            self.session.id, runner.provider_name, runner.provider_model
+        );
+        self.record_run_metadata(&runner);
         let session = self.session.clone();
+        if let Err(e) = session.save() {
+            tracing::warn!("Failed to persist session metadata: {e}");
+        }
 
         tokio::spawn(async move {
-            info!("Starting agent stream session: {}", session_id);
+            info!("{log}");
             runner.execute(tx, session, None).await;
         });
 
@@ -137,11 +155,18 @@ impl Agent {
         let todos: tools::SharedTodoList = tools::new_shared_todolist();
         tools::init_todo_list(todos.clone());
 
-        let session_id = self.session.id.clone();
+        let log = format!(
+            "Starting steerable agent session: {} ({} / {})",
+            self.session.id, runner.provider_name, runner.provider_model
+        );
+        self.record_run_metadata(&runner);
         let session = self.session.clone();
+        if let Err(e) = session.save() {
+            tracing::warn!("Failed to persist session metadata: {e}");
+        }
 
         tokio::spawn(async move {
-            info!("Starting steerable agent stream session: {}", session_id);
+            info!("{log}");
             runner.execute(tx, session, Some(steer_rx)).await;
         });
 
@@ -243,6 +268,21 @@ impl Agent {
     }
 }
 
+/// The result of a single generation attempt.
+enum GenerationOutcome {
+    /// A complete response was received.
+    Response {
+        text_acc: String,
+        assistant_dones: Vec<AssistantMessage>,
+        tool_calls: Vec<(AssistantMessage, ToolCallInfo)>,
+    },
+    /// The request did not yield a response.
+    Failed {
+        error: String,
+        emitted_content: bool,
+    },
+}
+
 impl AgentRunner {
     /// Writes an event to the debug log file when debug mode is enabled.
     fn persist_event(&self, event: &AgentEvent) {
@@ -318,10 +358,102 @@ impl AgentRunner {
         let mut builder = LanguageModelRequest::<M>::builder()
             .model(model)
             .messages(messages);
+        if let Some(temp) = self.temperature {
+            builder = builder.temperature((temp.clamp(0.0, 1.0) * 100.0).round() as u32);
+        }
+        if let Some(tokens) = self.max_tokens {
+            builder.max_output_tokens = Some(tokens);
+        }
         for tool in tools {
             builder = builder.with_tool(tool);
         }
         builder.build().deref().clone()
+    }
+
+    /// Runs one generation attempt: streams a response for `working` and
+    /// surfaces text/reasoning deltas as events. Returns either the collected
+    /// response pieces or a failure describing why the step did not produce a
+    /// response.
+    async fn generate_once<M: LanguageModel + ToolCallSupport>(
+        &self,
+        model: &M,
+        working: &Messages,
+        tx: &broadcast::Sender<AgentEvent>,
+    ) -> GenerationOutcome {
+        let options = self.build_options(model.clone(), working.clone());
+        let mut m = model.clone();
+        let mut stream = match m.stream_text(options).await {
+            Ok(s) => s,
+            Err(e) => {
+                return GenerationOutcome::Failed {
+                    error: e.to_string(),
+                    emitted_content: false,
+                };
+            }
+        };
+
+        let mut text_acc = String::new();
+        let mut assistant_dones: Vec<AssistantMessage> = Vec::new();
+        let mut tool_calls: Vec<(AssistantMessage, ToolCallInfo)> = Vec::new();
+        let mut emitted_content = false;
+
+        let mut record_done = |msg: AssistantMessage| {
+            if let LanguageModelResponseContentType::ToolCall(info) = &msg.content {
+                tool_calls.push((msg.clone(), info.clone()));
+            }
+            assistant_dones.push(msg);
+        };
+
+        while let Some(chunk) = stream.next().await {
+            match chunk {
+                Ok(chunks) => {
+                    for c in chunks {
+                        match c {
+                            LanguageModelStreamChunk::Delta(delta) => match delta {
+                                LanguageModelStreamChunkType::Start => {}
+                                LanguageModelStreamChunkType::Text(t) => {
+                                    self.emit_event(AgentEvent::TextDelta(t.clone()), tx);
+                                    text_acc.push_str(&t);
+                                    emitted_content = true;
+                                }
+                                LanguageModelStreamChunkType::Reasoning(r) => {
+                                    self.emit_event(AgentEvent::ReasoningDelta(r), tx);
+                                    emitted_content = true;
+                                }
+                                LanguageModelStreamChunkType::ToolCall(_) => {}
+                                LanguageModelStreamChunkType::End(msg) => record_done(msg),
+                                LanguageModelStreamChunkType::Failed(err) => {
+                                    return GenerationOutcome::Failed {
+                                        error: err,
+                                        emitted_content,
+                                    };
+                                }
+                                LanguageModelStreamChunkType::Incomplete(msg) => {
+                                    return GenerationOutcome::Failed {
+                                        error: msg,
+                                        emitted_content,
+                                    };
+                                }
+                                LanguageModelStreamChunkType::NotSupported(_) => {}
+                            },
+                            LanguageModelStreamChunk::Done(msg) => record_done(msg),
+                        }
+                    }
+                }
+                Err(e) => {
+                    return GenerationOutcome::Failed {
+                        error: e.to_string(),
+                        emitted_content,
+                    };
+                }
+            }
+        }
+
+        GenerationOutcome::Response {
+            text_acc,
+            assistant_dones,
+            tool_calls,
+        }
     }
 
     /// Runs the agent with streaming, driving the model one generation at a
@@ -350,7 +482,7 @@ impl AgentRunner {
 
         let mut steps = 0usize;
 
-        loop {
+        'run: loop {
             if steps >= self.max_steps {
                 self.emit_event(
                     AgentEvent::TextDelta("Stopped by max-steps hook".to_string()),
@@ -360,71 +492,57 @@ impl AgentRunner {
             }
             steps += 1;
 
-            let options = self.build_options(model.clone(), working.clone());
-            let mut m = model.clone();
-            let mut stream = match m.stream_text(options).await {
-                Ok(s) => s,
-                Err(e) => {
-                    self.emit_event(
-                        AgentEvent::Error(format!("Model streaming failed: {e}")),
-                        &tx,
-                    );
-                    break;
-                }
-            };
-
-            let mut text_acc = String::new();
-            let mut assistant_dones: Vec<AssistantMessage> = Vec::new();
-            let mut tool_calls: Vec<(AssistantMessage, ToolCallInfo)> = Vec::new();
-            let mut errored = false;
-
-            let mut record_done = |msg: AssistantMessage| {
-                if let LanguageModelResponseContentType::ToolCall(info) = &msg.content {
-                    tool_calls.push((msg.clone(), info.clone()));
-                }
-                assistant_dones.push(msg);
-            };
-
-            while let Some(chunk) = stream.next().await {
-                match chunk {
-                    Ok(chunks) => {
-                        for c in chunks {
-                            match c {
-                                LanguageModelStreamChunk::Delta(delta) => match delta {
-                                    LanguageModelStreamChunkType::Start => {}
-                                    LanguageModelStreamChunkType::Text(t) => {
-                                        self.emit_event(AgentEvent::TextDelta(t.clone()), &tx);
-                                        text_acc.push_str(&t);
-                                    }
-                                    LanguageModelStreamChunkType::Reasoning(r) => {
-                                        self.emit_event(AgentEvent::ReasoningDelta(r), &tx);
-                                    }
-                                    LanguageModelStreamChunkType::ToolCall(_) => {}
-                                    LanguageModelStreamChunkType::End(msg) => record_done(msg),
-                                    LanguageModelStreamChunkType::Failed(err) => {
-                                        self.emit_event(AgentEvent::Error(err), &tx);
-                                        errored = true;
-                                    }
-                                    LanguageModelStreamChunkType::Incomplete(msg) => {
-                                        self.emit_event(AgentEvent::TextDelta(msg), &tx);
-                                    }
-                                    LanguageModelStreamChunkType::NotSupported(_) => {}
+            let (text_acc, assistant_dones, tool_calls) = {
+                let mut attempt = 0usize;
+                loop {
+                    match self.generate_once(&model, &working, &tx).await {
+                        GenerationOutcome::Response {
+                            text_acc,
+                            assistant_dones,
+                            tool_calls,
+                        } => break (text_acc, assistant_dones, tool_calls),
+                        GenerationOutcome::Failed {
+                            error,
+                            emitted_content: true,
+                        } => {
+                            self.emit_event(
+                                AgentEvent::Error(format!(
+                                    "Model generation failed after streaming partial content: {error}"
+                                )),
+                                &tx,
+                            );
+                            break 'run;
+                        }
+                        GenerationOutcome::Failed { error, .. }
+                            if attempt >= self.retry_attempts =>
+                        {
+                            self.emit_event(
+                                AgentEvent::Error(format!(
+                                    "Model generation failed after {} retries: {error}",
+                                    self.retry_attempts
+                                )),
+                                &tx,
+                            );
+                            break 'run;
+                        }
+                        GenerationOutcome::Failed { error, .. } => {
+                            attempt += 1;
+                            warn!(
+                                "Step generation failed (attempt {} of {}): {error}",
+                                attempt, self.retry_attempts
+                            );
+                            self.emit_event(
+                                AgentEvent::Retrying {
+                                    attempt,
+                                    error: error.clone(),
                                 },
-                                LanguageModelStreamChunk::Done(msg) => record_done(msg),
-                            }
+                                &tx,
+                            );
+                            sleep(Duration::from_secs(self.retry_timeout_secs)).await;
                         }
                     }
-                    Err(e) => {
-                        self.emit_event(AgentEvent::Error(e.to_string()), &tx);
-                        errored = true;
-                        break;
-                    }
                 }
-            }
-
-            if errored {
-                break;
-            }
+            };
 
             if tool_calls.is_empty() {
                 for msg in &assistant_dones {
