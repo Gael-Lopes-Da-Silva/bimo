@@ -47,32 +47,9 @@ pub fn all_tools(disabled: &BTreeSet<String>) -> Vec<Tool> {
 
 /// Returns a human-readable description of the non-disabled tools for the system prompt.
 pub fn describe_tools(disabled: &BTreeSet<String>) -> String {
-    let desc = vec![
-        (
-            "read_file",
-            "Read contents of a file (with optional line range).",
-        ),
-        (
-            "edit_file",
-            "Make precise string replacements in an existing file. Provide old_string and new_string.",
-        ),
-        ("write_file", "Create or overwrite a file with new content."),
-        (
-            "run_command",
-            "Execute shell commands in the workspace. Supports output capture and timeout.",
-        ),
-        (
-            "manage_todo",
-            "Track tasks during the session. Actions: add, update, remove, list.",
-        ),
-    ];
-
     let mut out = String::new();
-    for (name, desc) in desc {
-        if disabled.contains(name) {
-            continue;
-        }
-        out.push_str(&format!("- **{name}**: {desc}\n"));
+    for tool in all_tools(disabled) {
+        out.push_str(&format!("- **{}**: {}\n", tool.name, tool.description));
     }
     out
 }
