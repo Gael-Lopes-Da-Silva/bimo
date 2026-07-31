@@ -110,6 +110,35 @@ impl Snapshot {
         self.remove_extra_files(&snapshot_files)
     }
 
+    /// Creates an independent copy of this snapshot: a fresh id pinned to the
+    /// same captured tree and persisted as a new metadata file. No new git
+    /// objects are created — only a ref and a metadata file. The original and
+    /// the copy never share refs or files, so deleting either is safe.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the snapshot commit can no longer be pinned (e.g.
+    /// it was pruned) or git operations fail.
+    pub fn duplicate(&self) -> Result<Self> {
+        let id = Uuid::new_v4().to_string();
+        git_ok(
+            &self.repo_root,
+            &[
+                "update-ref",
+                &format!("{SNAPSHOT_REF_PREFIX}{id}"),
+                &self.commit,
+            ],
+        )?;
+        let copy = Self {
+            id: id.clone(),
+            repo_root: self.repo_root.clone(),
+            commit: self.commit.clone(),
+            created_at: Utc::now(),
+        };
+        copy.save()?;
+        Ok(copy)
+    }
+
     /// Returns the directory where snapshot metadata files are stored.
     pub fn snapshots_dir() -> PathBuf {
         let base = dirs::config_dir().unwrap_or_else(|| PathBuf::from("~/.config"));

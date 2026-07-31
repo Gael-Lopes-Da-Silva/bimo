@@ -531,15 +531,43 @@ impl Session {
     ///
     /// The fork copies the whole context: messages, archived messages, todo
     /// list, run/snapshot metadata and undo history, so undoing or redoing in
-    /// the fork never affects the parent session (and vice versa). The fork is
-    /// persisted with a new id.
+    /// the fork never affects the parent session (and vice versa). The
+    /// referenced filesystem snapshots are duplicated (new ids, same captured
+    /// trees), so deleting the parent — or clearing its undo history with a new
+    /// prompt — never breaks the fork's undo/redo file restore, and vice versa.
+    /// The fork is persisted with a new id.
     pub fn fork(&self) -> crate::Result<Session> {
         let mut fork = self.clone();
         fork.id = Uuid::new_v4().to_string();
         fork.created_at = Utc::now();
         fork.updated_at = Utc::now();
+
+        Self::duplicate_snapshot_records(&mut fork.snapshots);
+        for batch in &mut fork.undo_stack {
+            Self::duplicate_snapshot_records(&mut batch.snapshots);
+        }
+
         fork.save()?;
         Ok(fork)
+    }
+
+    /// Rewrites the snapshot ids referenced by `records` to duplicated copies,
+    /// so the owning session never shares snapshot files with another session.
+    /// Best-effort: a snapshot that cannot be loaded or duplicated is left
+    /// unchanged and only logs a warning.
+    fn duplicate_snapshot_records(records: &mut [crate::snapshot::SnapshotRecord]) {
+        for record in records {
+            for slot in [&mut record.id, &mut record.after] {
+                let Some(id) = slot.take() else { continue };
+                match crate::snapshot::Snapshot::load(&id).and_then(|s| s.duplicate()) {
+                    Ok(copy) => *slot = Some(copy.id),
+                    Err(e) => {
+                        warn!("Failed to duplicate snapshot {id} for fork: {e}");
+                        *slot = Some(id);
+                    }
+                }
+            }
+        }
     }
 
     /// Returns the message index of each run's user message in `messages`,
