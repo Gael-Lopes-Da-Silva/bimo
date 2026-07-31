@@ -4,8 +4,10 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use tracing::info;
 
+use aisdk::core::language_model::ReasoningEffort;
+
 use crate::agent::Agent;
-use crate::agent::executor::AgentRunner;
+use crate::agent::executor::{AgentRunner, parse_reasoning_effort};
 use crate::config::Provider;
 use crate::config::Settings;
 use crate::error::Result;
@@ -27,6 +29,7 @@ pub struct AgentBuilder {
     max_steps: Option<usize>,
     temperature: Option<f32>,
     max_tokens: Option<u32>,
+    reasoning_effort: Option<ReasoningEffort>,
     retry_attempts: Option<usize>,
     retry_timeout_secs: Option<u64>,
 }
@@ -44,6 +47,7 @@ impl AgentBuilder {
             max_steps: None,
             temperature: None,
             max_tokens: None,
+            reasoning_effort: None,
             retry_attempts: None,
             retry_timeout_secs: None,
         }
@@ -97,6 +101,16 @@ impl AgentBuilder {
     /// Sets the maximum output tokens.
     pub fn with_max_tokens(mut self, tokens: u32) -> Self {
         self.max_tokens = Some(tokens);
+        self
+    }
+
+    /// Sets the model reasoning effort, overriding the per-session value for
+    /// this run.
+    ///
+    /// If unset, the run uses the session's stored effort for the model, or the
+    /// provider default when none is stored.
+    pub fn with_reasoning_effort(mut self, effort: ReasoningEffort) -> Self {
+        self.reasoning_effort = Some(effort);
         self
     }
 
@@ -211,6 +225,13 @@ impl AgentBuilder {
 
         let model = self.model.unwrap_or_else(|| provider.id.clone());
 
+        let reasoning_effort = self.reasoning_effort.or_else(|| {
+            self.session
+                .as_ref()
+                .and_then(|s| s.reasoning_effort_for(&model))
+                .and_then(parse_reasoning_effort)
+        });
+
         let tools_desc = tools::describe_tools(&disabled_tools);
 
         let skill_dirs = skill::default_skill_dirs(self.project_dir.as_deref());
@@ -247,6 +268,7 @@ impl AgentBuilder {
             max_steps,
             temperature: self.temperature,
             max_tokens: self.max_tokens,
+            reasoning_effort,
             debug: self.settings.debug,
             session_id: self
                 .session

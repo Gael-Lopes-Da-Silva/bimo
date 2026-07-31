@@ -3,7 +3,6 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
-
 /// Map of model id → [`ModelEntry`] for a given provider.
 pub type ModelMap = HashMap<String, ModelEntry>;
 
@@ -78,10 +77,31 @@ pub struct ModelCost {
 }
 
 /// A reasoning budget option available for this model.
+///
+/// models.dev exposes three option types: `"toggle"` (boolean on/off, no
+/// parameters), `"effort"` (string selector via `values`), and
+/// `"budget_tokens"` (numeric range via `min`/`max`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReasoningOption {
     #[serde(rename = "type")]
     pub option_type: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_option_values")]
     pub values: Option<Vec<String>>,
+    #[serde(default)]
+    pub min: Option<i64>,
+    #[serde(default)]
+    pub max: Option<i64>,
+}
+
+/// Tolerantly deserializes `values`, dropping `null` elements.
+///
+/// models.dev emits `null` inside `values` for a couple of models
+/// (e.g. `sarvam/sarvam-30b`), which would otherwise fail strict
+/// `Vec<String>` deserialization and break the whole models.dev load.
+fn de_option_values<'de, D>(deserializer: D) -> Result<Option<Vec<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let values: Option<Vec<Option<String>>> = Option::deserialize(deserializer)?;
+    Ok(values.map(|v| v.into_iter().flatten().collect()))
 }

@@ -2,9 +2,10 @@
 
 use std::ops::Deref;
 
-use aisdk::core::capabilities::{TextInputSupport, ToolCallSupport};
+use aisdk::core::capabilities::{ReasoningSupport, TextInputSupport, ToolCallSupport};
 use aisdk::core::language_model::{
     LanguageModelOptions, LanguageModelResponseContentType, LanguageModelStreamChunk,
+    ReasoningEffort,
 };
 use aisdk::core::tools::{ToolCallInfo, ToolList, ToolResultInfo};
 use aisdk::core::{
@@ -78,11 +79,25 @@ pub(crate) struct AgentRunner {
     pub max_steps: usize,
     pub temperature: Option<f32>,
     pub max_tokens: Option<u32>,
+    pub reasoning_effort: Option<ReasoningEffort>,
     pub debug: bool,
     pub session_id: String,
     pub disabled_tools: std::collections::BTreeSet<String>,
     pub retry_attempts: usize,
     pub retry_timeout_secs: u64,
+}
+
+/// Maps a raw models.dev reasoning value to aisdk's [`ReasoningEffort`].
+///
+/// Only the portable subset is expressible through aisdk; `none`/`default`
+/// and unknown values map to `None` (provider default).
+pub fn parse_reasoning_effort(value: &str) -> Option<ReasoningEffort> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "minimal" | "low" => Some(ReasoningEffort::Low),
+        "medium" => Some(ReasoningEffort::Medium),
+        "high" | "xhigh" | "max" => Some(ReasoningEffort::High),
+        _ => None,
+    }
 }
 
 impl Agent {
@@ -354,7 +369,7 @@ impl AgentRunner {
 
     /// Builds a single-generation `LanguageModelOptions` carrying the running
     /// conversation and the enabled tools.
-    fn build_options<M: LanguageModel + ToolCallSupport>(
+    fn build_options<M: LanguageModel + ToolCallSupport + ReasoningSupport>(
         &self,
         model: M,
         messages: Messages,
@@ -369,6 +384,9 @@ impl AgentRunner {
         if let Some(tokens) = self.max_tokens {
             builder.max_output_tokens = Some(tokens);
         }
+        if let Some(effort) = self.reasoning_effort {
+            builder = builder.reasoning_effort(effort);
+        }
         for tool in tools {
             builder = builder.with_tool(tool);
         }
@@ -379,7 +397,7 @@ impl AgentRunner {
     /// surfaces text/reasoning deltas as events. Returns either the collected
     /// response pieces or a failure describing why the step did not produce a
     /// response.
-    async fn generate_once<M: LanguageModel + ToolCallSupport>(
+    async fn generate_once<M: LanguageModel + ToolCallSupport + ReasoningSupport>(
         &self,
         model: &M,
         working: &Messages,
@@ -467,7 +485,7 @@ impl AgentRunner {
     /// When `steer_rx` is `Some`, the run pauses before executing each proposed
     /// tool call and waits for a [`SteerCommand`]. Conversation messages are
     /// appended to `session` and persisted as the run progresses.
-    async fn execute_loop<M: LanguageModel + ToolCallSupport>(
+    async fn execute_loop<M: LanguageModel + ToolCallSupport + ReasoningSupport>(
         self,
         model: M,
         tx: broadcast::Sender<AgentEvent>,

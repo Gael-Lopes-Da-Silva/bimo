@@ -2,7 +2,7 @@
 
 mod manager;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -36,6 +36,10 @@ pub struct Session {
     /// Ids of skills disabled for this session.
     #[serde(default)]
     pub disabled_skills: BTreeSet<String>,
+    /// Reasoning effort per model id (raw models.dev value, e.g. `"low"`),
+    /// applied to runs of that model unless overridden.
+    #[serde(default)]
+    pub reasoning_efforts: BTreeMap<String, String>,
     pub metadata: serde_json::Value,
 }
 
@@ -51,6 +55,7 @@ impl Session {
             todo_list: TodoList::new(),
             disabled_tools: BTreeSet::new(),
             disabled_skills: BTreeSet::new(),
+            reasoning_efforts: BTreeMap::new(),
             metadata: serde_json::json!({}),
         }
     }
@@ -180,6 +185,24 @@ impl Session {
     pub fn enable_skill(&mut self, id: &str) -> bool {
         self.updated_at = Utc::now();
         self.disabled_skills.remove(id)
+    }
+
+    /// Stores a reasoning effort for the given model id.
+    pub fn set_reasoning_effort(&mut self, model: &str, effort: String) {
+        self.reasoning_efforts.insert(model.to_string(), effort);
+        self.updated_at = Utc::now();
+    }
+
+    /// Removes the stored reasoning effort for the given model id, restoring
+    /// the provider default for that model.
+    pub fn remove_reasoning_effort(&mut self, model: &str) {
+        self.reasoning_efforts.remove(model);
+        self.updated_at = Utc::now();
+    }
+
+    /// Returns the stored reasoning effort for the given model id, if any.
+    pub fn reasoning_effort_for(&self, model: &str) -> Option<&str> {
+        self.reasoning_efforts.get(model).map(String::as_str)
     }
 
     /// Returns the directory where session files are stored.
