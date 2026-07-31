@@ -77,6 +77,46 @@ impl Session {
         self.updated_at = Utc::now();
     }
 
+    /// Restores a single archived message into the conversation, removing it
+    /// from the archive.
+    ///
+    /// Returns `None` if `batch` or `index` is out of range.
+    pub fn restore_archived(&mut self, batch: usize, index: usize) -> Option<Message> {
+        if index >= self.archived_messages.get(batch)?.len() {
+            return None;
+        }
+        let msg = self.archived_messages[batch].remove(index);
+        if self.archived_messages[batch].is_empty() {
+            self.archived_messages.remove(batch);
+        }
+        self.messages.push(msg.clone());
+        self.updated_at = Utc::now();
+        Some(msg)
+    }
+
+    /// Restores all messages of an archived batch into the conversation,
+    /// removing the batch from the archive.
+    ///
+    /// Returns `None` if `batch` is out of range.
+    pub fn restore_archived_batch(&mut self, batch: usize) -> Option<Vec<Message>> {
+        if batch >= self.archived_messages.len() {
+            return None;
+        }
+        let restored = self.archived_messages.remove(batch);
+        self.messages.extend(restored.clone());
+        self.updated_at = Utc::now();
+        Some(restored)
+    }
+
+    /// Restores every archived message into the conversation, clearing the
+    /// archive.
+    pub fn restore_all_archived(&mut self) -> Vec<Message> {
+        let restored: Vec<Message> = self.archived_messages.drain(..).flatten().collect();
+        self.messages.extend(restored.clone());
+        self.updated_at = Utc::now();
+        restored
+    }
+
     /// Returns the names of tools disabled for this session.
     pub fn disabled_tools(&self) -> &BTreeSet<String> {
         &self.disabled_tools
