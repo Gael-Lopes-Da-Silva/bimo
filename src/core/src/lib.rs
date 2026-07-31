@@ -19,7 +19,7 @@ pub use error::{BimoError, Result};
 pub use models::{ModelEntry, ModelRegistry};
 pub use prompt::PromptEngine;
 pub use providers::{
-    ProviderRegistry, auto_discover_models, builtin_local_providers, discover_models,
+    CloudProviderRegistry, LocalProviderRegistry, auto_discover_models, discover_models,
     resolve_from_registry, resolve_provider,
 };
 pub use session::{Message, Session, SessionManager};

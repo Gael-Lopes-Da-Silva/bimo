@@ -1,4 +1,4 @@
-//! Registry data types — entries and maps from the models.dev API.
+//! Provider entries from the models.dev registry.
 
 use std::collections::HashMap;
 

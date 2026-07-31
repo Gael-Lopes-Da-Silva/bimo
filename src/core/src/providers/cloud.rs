@@ -6,7 +6,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 
-use super::types::{ProviderEntry, ProviderMap};
+use super::entry::{ProviderEntry, ProviderMap};
 use crate::config::{ApiFormat, Provider};
 use crate::error::{BimoError, Result};
 
@@ -17,12 +17,12 @@ const MODELS_DEV_URL: &str = "https://models.dev/api.json";
 /// Data is fetched from the remote API on first load and cached to
 /// `~/.config/bimo/models_cache.json` so it remains available offline.
 #[derive(Debug, Clone)]
-pub struct ProviderRegistry {
+pub struct CloudProviderRegistry {
     providers: Arc<RwLock<ProviderMap>>,
     cache_path: PathBuf,
 }
 
-impl ProviderRegistry {
+impl CloudProviderRegistry {
     /// Creates a new empty registry.
     ///
     /// Call [`load`](Self::load) or [`refresh`](Self::refresh) to populate it.
@@ -177,7 +177,7 @@ impl ProviderRegistry {
     }
 }
 
-impl Default for ProviderRegistry {
+impl Default for CloudProviderRegistry {
     fn default() -> Self {
         Self::new()
     }

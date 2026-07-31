@@ -5,12 +5,12 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use super::types::ModelEntry;
-use crate::providers::{ProviderMap, ProviderRegistry};
+use crate::providers::{CloudProviderRegistry, ProviderMap};
 
 /// Queries model metadata from a shared [`ProviderMap`].
 ///
 /// Created via [`from_registry`](Self::from_registry) so it shares the same
-/// in-memory data as the [`ProviderRegistry`] without duplicating it.
+/// in-memory data as the [`CloudProviderRegistry`] without duplicating it.
 #[derive(Debug, Clone)]
 pub struct ModelRegistry {
     providers: Arc<RwLock<ProviderMap>>,
@@ -18,7 +18,7 @@ pub struct ModelRegistry {
 
 impl ModelRegistry {
     /// Creates a `ModelRegistry` that shares the given registry's provider data.
-    pub fn from_registry(registry: &ProviderRegistry) -> Self {
+    pub fn from_registry(registry: &CloudProviderRegistry) -> Self {
         Self {
             providers: registry.providers_ref().clone(),
         }

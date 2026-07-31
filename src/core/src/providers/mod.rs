@@ -1,53 +1,24 @@
 //! Provider resolution — built-in locals, cloud registries, model discovery.
 
-mod registry;
-pub mod types;
+mod cloud;
+mod entry;
+mod local;
 
 use std::time::Duration;
 
-pub use registry::ProviderRegistry;
-pub use types::{ProviderEntry, ProviderMap};
+pub use cloud::CloudProviderRegistry;
+pub use entry::{ProviderEntry, ProviderMap};
+pub use local::LocalProviderRegistry;
 
 use crate::config::Provider;
 use crate::error::BimoError;
-
-/// Built-in local providers known to the system (ollama, lmstudio, vllm, llamacpp).
-pub fn builtin_local_providers() -> Vec<Provider> {
-    use crate::config::ApiFormat;
-    vec![
-        Provider::local(
-            "ollama",
-            "Ollama",
-            "http://localhost:11434/v1",
-            ApiFormat::OpenAICompatible,
-        ),
-        Provider::local(
-            "lmstudio",
-            "LM Studio",
-            "http://localhost:1234/v1",
-            ApiFormat::OpenAICompatible,
-        ),
-        Provider::local(
-            "vllm",
-            "vLLM",
-            "http://localhost:8000/v1",
-            ApiFormat::OpenAICompatible,
-        ),
-        Provider::local(
-            "llamacpp",
-            "llama.cpp",
-            "http://localhost:8080/v1",
-            ApiFormat::OpenAICompatible,
-        ),
-    ]
-}
 
 /// Look up a provider by id or name — checks configured providers first,
 /// then falls back to built-in local providers, then the registry.
 pub async fn resolve_provider(
     id_or_name: &str,
     configured: &[Provider],
-    registry: Option<&ProviderRegistry>,
+    registry: Option<&CloudProviderRegistry>,
 ) -> Option<Provider> {
     let lower = id_or_name.to_lowercase();
     let from_config = configured
@@ -57,9 +28,7 @@ pub async fn resolve_provider(
     if from_config.is_some() {
         return from_config;
     }
-    let from_builtin = builtin_local_providers()
-        .into_iter()
-        .find(|p| p.id.to_lowercase() == lower || p.name.to_lowercase() == lower);
+    let from_builtin = LocalProviderRegistry::new().find(id_or_name);
     if from_builtin.is_some() {
         return from_builtin;
     }
@@ -113,7 +82,7 @@ pub async fn auto_discover_models(provider: &mut Provider) {
 }
 
 /// Resolve base URLs for cloud providers from the models.dev registry.
-pub async fn resolve_from_registry(configured: &mut [Provider], registry: &ProviderRegistry) {
+pub async fn resolve_from_registry(configured: &mut [Provider], registry: &CloudProviderRegistry) {
     for provider in configured.iter_mut() {
         if provider.is_cloud()
             && provider.base_url.is_empty()
