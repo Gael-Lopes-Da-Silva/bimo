@@ -214,8 +214,10 @@ impl AgentBuilder {
 
         let skill_dirs = skill::default_skill_dirs(self.project_dir.as_deref());
         let mut skills = skill::load_skills(&skill_dirs);
-        for id in &disabled_skills {
-            skill::disable_skill(&mut skills, id);
+        for skill in &mut skills {
+            if disabled_skills.contains(&skill.id) {
+                skill.enabled = false;
+            }
         }
         let skills_rendered = skill::render_skills(&skills);
 

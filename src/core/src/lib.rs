@@ -20,7 +20,7 @@ pub use models::{ModelEntry, ModelRegistry};
 pub use prompt::PromptEngine;
 pub use providers::{CloudProviderRegistry, LocalProviderRegistry};
 pub use session::{Message, Session, SessionManager};
-pub use skill::{Skill, disable_skill, enable_skill, filter_enabled};
+pub use skill::Skill;
 pub use tools::{TodoItem, TodoList, TodoPriority, TodoStatus};
 pub use tools::{
     edit_file, is_builtin, manage_todo, read_file, run_command, tool_names, write_file,

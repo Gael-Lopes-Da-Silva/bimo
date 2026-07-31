@@ -13,7 +13,7 @@ pub struct Skill {
     /// One-line description from frontmatter.
     pub description: String,
     /// Whether the skill is active.  Set via frontmatter `enabled:` or
-    /// toggled at runtime with [`enable_skill`] / [`disable_skill`].
+    /// disabled per session.
     pub enabled: bool,
     /// Instruction body — everything after the frontmatter block in `SKILL.md`.
     pub content: String,
@@ -141,35 +141,6 @@ fn parse_frontmatter(content: &str) -> Option<(String, String)> {
         String::new()
     };
     Some((frontmatter, body))
-}
-
-/// Returns only the enabled skills from the slice.
-pub fn filter_enabled(skills: &[Skill]) -> Vec<&Skill> {
-    skills.iter().filter(|s| s.enabled).collect()
-}
-
-/// Sets `skill.enabled = true` for the skill with the given `id`.
-///
-/// Returns `true` if a matching skill was found.
-pub fn enable_skill(skills: &mut [Skill], id: &str) -> bool {
-    if let Some(s) = skills.iter_mut().find(|s| s.id == id) {
-        s.enabled = true;
-        true
-    } else {
-        false
-    }
-}
-
-/// Sets `skill.enabled = false` for the skill with the given `id`.
-///
-/// Returns `true` if a matching skill was found.
-pub fn disable_skill(skills: &mut [Skill], id: &str) -> bool {
-    if let Some(s) = skills.iter_mut().find(|s| s.id == id) {
-        s.enabled = false;
-        true
-    } else {
-        false
-    }
 }
 
 /// Formats enabled skills as compact bullet entries for prompt injection.
