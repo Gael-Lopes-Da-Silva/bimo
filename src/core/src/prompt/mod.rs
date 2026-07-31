@@ -28,22 +28,28 @@ pub fn render_template(template: &str, vars: &HashMap<String, String>) -> String
 pub struct PromptEngine;
 
 impl PromptEngine {
+    /// Creates a new prompt engine.
     pub fn new() -> Self {
         Self
     }
 
+    /// Returns the embedded system prompt template.
     pub fn system_template() -> &'static str {
         SYSTEM_PROMPT
     }
 
+    /// Returns the embedded summary prompt template.
     pub fn summary_template() -> &'static str {
         SUMMARY_PROMPT
     }
 
+    /// Returns the embedded compaction prompt template.
     pub fn compact_template() -> &'static str {
         COMPACT_PROMPT
     }
 
+    /// Formats a slice of session messages as a single conversation block,
+    /// one `[role] timestamp\ncontent` entry per message.
     pub fn format_messages(messages: &[crate::session::Message]) -> String {
         messages
             .iter()
@@ -59,6 +65,8 @@ impl PromptEngine {
             .join("\n\n")
     }
 
+    /// Renders the system prompt, injecting `vars` on top of the built-in
+    /// `{{DATE}}` and `{{CWD}}` values.
     pub fn render_system(vars: &HashMap<String, String>) -> String {
         let mut default_vars = HashMap::new();
         default_vars.insert(
@@ -82,18 +90,21 @@ impl PromptEngine {
         render_template(SYSTEM_PROMPT, &default_vars)
     }
 
+    /// Renders the summary prompt for a given summary text.
     pub fn render_summary(summary: &str) -> String {
         let mut vars = HashMap::new();
         vars.insert("SUMMARY".to_string(), summary.to_string());
         render_template(SUMMARY_PROMPT, &vars)
     }
 
+    /// Renders the session-naming prompt for a given conversation context.
     pub fn render_session_name(context: &str) -> String {
         let mut vars = HashMap::new();
         vars.insert("CONTEXT".to_string(), context.to_string());
         render_template(SESSION_NAME_PROMPT, &vars)
     }
 
+    /// Renders the compaction prompt for a given conversation history.
     pub fn render_compact(conversation: &str) -> String {
         let mut vars = HashMap::new();
         vars.insert("CONVERSATION".to_string(), conversation.to_string());

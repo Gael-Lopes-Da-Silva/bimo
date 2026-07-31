@@ -31,15 +31,22 @@ pub enum ApiFormat {
 /// the models.dev registry if left empty.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Provider {
+    /// Unique identifier used to reference this provider (e.g. `"ollama"`).
     pub id: String,
+    /// Human-readable display name (e.g. `"Ollama"`).
     pub name: String,
+    /// Base URL of the provider's API endpoint.
     pub base_url: String,
+    /// Optional API key. Omitted from serialization when unset.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub api_key: Option<String>,
+    /// Whether this is a local or cloud service (serialized as `"type"`).
     #[serde(rename = "type")]
     pub provider_type: ProviderType,
+    /// Model ids served by this provider, if known.
     #[serde(default)]
     pub models: Vec<String>,
+    /// Wire format the provider's endpoint expects.
     pub api_format: ApiFormat,
 }
 

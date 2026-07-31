@@ -135,7 +135,9 @@ impl SessionManager {
 
                 to_remove_excess = sessions_sorted.split_off(max_sessions);
 
-                // Clear and reinsert only the kept sessions to avoid draining the hashmap entirely
+                // Rebuild the in-memory map with only the kept sessions (the
+                // `max_sessions` most recently updated), so it matches what
+                // remains on disk after the excess are deleted below.
                 let kept: Vec<(String, Session)> = sessions_sorted;
                 map.clear();
                 for (id, session) in kept {

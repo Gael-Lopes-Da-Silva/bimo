@@ -69,21 +69,37 @@ pub struct Agent {
 
 /// Internal agent runner holding all parameters needed to build and execute a model request.
 pub(crate) struct AgentRunner {
+    /// Display name of the configured provider.
     pub provider_name: String,
+    /// Model id to run against.
     pub provider_model: String,
+    /// Optional API key for the provider.
     pub provider_api_key: Option<String>,
+    /// Provider endpoint base URL.
     pub provider_base_url: String,
+    /// Wire format of the provider endpoint.
     pub api_format: ApiFormat,
+    /// Compiled system prompt (context, tools, skills).
     pub system_prompt: String,
+    /// The user's original prompt.
     pub user_prompt: String,
+    /// Maximum tool-call steps before the run stops.
     pub max_steps: usize,
+    /// Optional sampling temperature (0.0–1.0).
     pub temperature: Option<f32>,
+    /// Optional cap on output tokens.
     pub max_tokens: Option<u32>,
+    /// Optional reasoning effort override.
     pub reasoning_effort: Option<ReasoningEffort>,
+    /// Enables debug logging and event persistence.
     pub debug: bool,
+    /// Id of the session this run belongs to (for debug logs).
     pub session_id: String,
+    /// Tools disabled for this session, excluded from the model.
     pub disabled_tools: std::collections::BTreeSet<String>,
+    /// Number of retries per failed generation step.
     pub retry_attempts: usize,
+    /// Delay in seconds between retries.
     pub retry_timeout_secs: u64,
     /// Project root whose filesystem is snapshotted before the run, enabling
     /// the UI to revert file changes when undoing the prompt.

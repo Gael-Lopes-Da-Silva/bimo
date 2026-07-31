@@ -43,6 +43,8 @@ pub fn edit_file(
                 let after = &content[pos + old_string.len()..];
                 format!("{before}{new_string}{after}")
             }
+            // Guaranteed to match: `content.contains(&old_string)` was checked
+            // above, so a first occurrence always exists.
             None => unreachable!(),
         }
     };

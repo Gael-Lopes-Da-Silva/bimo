@@ -16,16 +16,25 @@ pub type ProviderMap = HashMap<String, ProviderEntry>;
 /// environment variables, and available models.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderEntry {
+    /// Provider identifier (e.g. `"anthropic"`).
     pub id: String,
+    /// Human-readable provider name.
     pub name: String,
+    /// Link to the provider's documentation, if known.
     #[serde(default)]
     pub doc: Option<String>,
+    /// Names of environment variables carrying the API key.
     #[serde(default)]
     pub env: Vec<String>,
+    /// SDK package name (e.g. `"@ai-sdk/anthropic"`), used to derive the
+    /// [`ApiFormat`].
     #[serde(default)]
     pub npm: Option<String>,
+    /// Free-form API metadata from models.dev; `base_url` reads a string
+    /// value out of this when present.
     #[serde(default)]
     pub api: Option<serde_json::Value>,
+    /// Models served by this provider, keyed by model id.
     pub models: HashMap<String, ModelEntry>,
 }
 

@@ -32,11 +32,13 @@ const SNAPSHOT_REF_PREFIX: &str = "refs/bimo/snapshots/";
 /// the project's own git repository.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Snapshot {
+    /// Unique snapshot id; also used as the git ref suffix.
     pub id: String,
     /// Absolute path to the git repository root that was captured.
     pub repo_root: PathBuf,
     /// Commit object holding the captured tree.
     pub commit: String,
+    /// When the snapshot was captured.
     pub created_at: DateTime<Utc>,
 }
 

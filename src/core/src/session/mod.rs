@@ -17,10 +17,14 @@ pub use manager::SessionManager;
 /// A single message in a session conversation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
+    /// Unique message id; used to target undo/redo and run records.
     #[serde(default = "default_message_id")]
     pub id: String,
+    /// Message author: `"user"`, `"assistant"`, `"system"`, or `"tool"`.
     pub role: String,
+    /// Message body.
     pub content: String,
+    /// When the message was created.
     pub timestamp: DateTime<Utc>,
 }
 

@@ -6,12 +6,16 @@ use tracing::info;
 /// The status of a todo item.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum TodoStatus {
+    /// Not started yet.
     #[serde(rename = "pending")]
     Pending,
+    /// Currently being worked on.
     #[serde(rename = "in_progress")]
     InProgress,
+    /// Finished.
     #[serde(rename = "completed")]
     Completed,
+    /// Discarded without completion.
     #[serde(rename = "cancelled")]
     Cancelled,
 }
@@ -19,10 +23,13 @@ pub enum TodoStatus {
 /// Priority level for a todo item.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum TodoPriority {
+    /// High priority.
     #[serde(rename = "high")]
     High,
+    /// Medium priority.
     #[serde(rename = "medium")]
     Medium,
+    /// Low priority.
     #[serde(rename = "low")]
     Low,
 }
@@ -30,11 +37,17 @@ pub enum TodoPriority {
 /// A single todo item with metadata.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TodoItem {
+    /// Unique item id.
     pub id: String,
+    /// Human-readable description of the task.
     pub description: String,
+    /// Current status.
     pub status: TodoStatus,
+    /// Priority level.
     pub priority: TodoPriority,
+    /// When the item was created.
     pub created_at: DateTime<Utc>,
+    /// When the item was last updated.
     pub updated_at: DateTime<Utc>,
 }
 
