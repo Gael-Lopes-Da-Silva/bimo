@@ -1,7 +1,9 @@
-//! Model metadata types and registry for querying models from known providers.
+//! Model metadata types, registry, and concrete client construction.
 
+mod provider;
 mod registry;
 pub mod types;
 
+pub(crate) use provider::{ModelProvider, dispatch_model};
 pub use registry::ModelRegistry;
 pub use types::{ModelCost, ModelEntry, ModelLimit, ModelMap, ModelModalities, ReasoningOption};

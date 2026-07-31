@@ -1,26 +1,17 @@
 //! Agent execution — model dispatching, streaming, event emission.
 
 use aisdk::core::capabilities::{TextInputSupport, ToolCallSupport};
-use aisdk::core::{
-    DynamicModel, LanguageModel, LanguageModelRequest, LanguageModelStreamChunkType,
-};
-use aisdk::providers::{Anthropic, Google, OpenAICompatible};
+use aisdk::core::{LanguageModel, LanguageModelRequest, LanguageModelStreamChunkType};
 use futures::StreamExt;
 use tokio::sync::broadcast;
 use tracing::info;
 
 use crate::config::ApiFormat;
 use crate::error::Result;
+use crate::models::{ModelProvider, dispatch_model};
 use crate::prompt::PromptEngine;
 use crate::session::Session;
 use crate::tools;
-
-/// Erased OpenAI-compatible model type used at runtime.
-type OpenAIModel = OpenAICompatible<DynamicModel>;
-/// Erased Anthropic model type used at runtime.
-type AnthropicModel = Anthropic<DynamicModel>;
-/// Erased Google model type used at runtime.
-type GoogleModel = Google<DynamicModel>;
 
 /// Events emitted by the agent during a streaming run.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -68,86 +59,6 @@ pub(crate) struct AgentRunner {
     pub session_id: String,
     pub retry_attempts: usize,
     pub retry_timeout_secs: u64,
-}
-
-/// Erased model type — dispatches to the concrete provider SDK at build time.
-enum ModelProvider {
-    OpenAI(Box<OpenAIModel>),
-    Anthropic(Box<AnthropicModel>),
-    Google(Box<GoogleModel>),
-}
-
-impl ModelProvider {
-    /// Builds the appropriate model variant from config fields.
-    async fn build(
-        api_format: &ApiFormat,
-        base_url: &str,
-        model_name: &str,
-        api_key: Option<String>,
-    ) -> std::result::Result<Self, String> {
-        match api_format {
-            ApiFormat::OpenAICompatible | ApiFormat::OpenAI => {
-                Self::build_openai(base_url, model_name, api_key).await
-            }
-            ApiFormat::Google => Self::build_google(base_url, model_name, api_key).await,
-            ApiFormat::Anthropic => Self::build_anthropic(base_url, model_name, api_key).await,
-            ApiFormat::Other(fmt) => Err(format!("unsupported API format: {fmt}")),
-        }
-    }
-
-    /// Builds an OpenAI-compatible model client.
-    async fn build_openai(
-        base_url: &str,
-        model_name: &str,
-        api_key: Option<String>,
-    ) -> std::result::Result<Self, String> {
-        let mut builder = OpenAICompatible::<DynamicModel>::builder()
-            .base_url(base_url)
-            .model_name(model_name);
-        if let Some(key) = api_key {
-            builder = builder.api_key(key);
-        }
-        builder
-            .build()
-            .map(|m| Self::OpenAI(Box::new(m)))
-            .map_err(|e| format!("Failed to build OpenAI-compatible model: {e}"))
-    }
-
-    /// Builds an Anthropic model client.
-    async fn build_anthropic(
-        base_url: &str,
-        model_name: &str,
-        api_key: Option<String>,
-    ) -> std::result::Result<Self, String> {
-        let mut builder = Anthropic::<DynamicModel>::builder()
-            .base_url(base_url)
-            .model_name(model_name);
-        if let Some(key) = api_key {
-            builder = builder.api_key(key);
-        }
-        builder
-            .build()
-            .map(|m| Self::Anthropic(Box::new(m)))
-            .map_err(|e| format!("Failed to build Anthropic model: {e}"))
-    }
-
-    /// Builds a Google model client.
-    async fn build_google(
-        base_url: &str,
-        model_name: &str,
-        api_key: Option<String>,
-    ) -> std::result::Result<Self, String> {
-        let mut builder = Google::<DynamicModel>::builder()
-            .base_url(base_url)
-            .model_name(model_name);
-        if let Some(key) = api_key {
-            builder = builder.api_key(key);
-        }
-        builder
-            .build()
-            .map(|m| Self::Google(Box::new(m)))
-            .map_err(|e| format!("Failed to build Google model: {e}"))
-    }
 }
 
 impl Agent {
@@ -231,11 +142,7 @@ impl Agent {
         let model = runner.build_model().await.map_err(|e| {
             crate::error::BimoError::Agent(format!("Session naming model build failed: {}", e))
         })?;
-        match model {
-            ModelProvider::OpenAI(model) => self.name_with_model(*model, &name_prompt).await,
-            ModelProvider::Anthropic(model) => self.name_with_model(*model, &name_prompt).await,
-            ModelProvider::Google(model) => self.name_with_model(*model, &name_prompt).await,
-        }
+        dispatch_model!(model, self, name_with_model, &name_prompt)
     }
 
     async fn name_with_model<M>(&mut self, model: M, name_prompt: &str) -> Result<String>
@@ -282,13 +189,7 @@ impl Agent {
         let model = runner.build_model().await.map_err(|e| {
             crate::error::BimoError::Agent(format!("Compaction model build failed: {}", e))
         })?;
-        match model {
-            ModelProvider::OpenAI(model) => self.compact_with_model(*model, &compact_prompt).await,
-            ModelProvider::Anthropic(model) => {
-                self.compact_with_model(*model, &compact_prompt).await
-            }
-            ModelProvider::Google(model) => self.compact_with_model(*model, &compact_prompt).await,
-        }
+        dispatch_model!(model, self, compact_with_model, &compact_prompt)
     }
 
     async fn compact_with_model<M>(&mut self, model: M, conversation_prompt: &str) -> Result<String>
@@ -430,11 +331,7 @@ impl AgentRunner {
 
     /// Runs the agent (non-streaming) — builds the model then executes.
     async fn execute(self) -> std::result::Result<(), String> {
-        match self.build_model().await? {
-            ModelProvider::OpenAI(model) => self.execute_model(*model).await,
-            ModelProvider::Anthropic(model) => self.execute_model(*model).await,
-            ModelProvider::Google(model) => self.execute_model(*model).await,
-        }
+        dispatch_model!(self.build_model().await?, self, execute_model)
     }
 
     /// Runs the agent with streaming — emits [`AgentEvent`]s into the channel.
@@ -447,10 +344,6 @@ impl AgentRunner {
                 return;
             }
         };
-        match model {
-            ModelProvider::OpenAI(m) => self.execute_model_stream(*m, tx).await,
-            ModelProvider::Anthropic(m) => self.execute_model_stream(*m, tx).await,
-            ModelProvider::Google(m) => self.execute_model_stream(*m, tx).await,
-        }
+        dispatch_model!(model, self, execute_model_stream, tx)
     }
 }
