@@ -16,7 +16,7 @@ use tokio::sync::{broadcast, mpsc};
 use tracing::info;
 
 use crate::config::ApiFormat;
-use crate::error::{BimoError, Result};
+use crate::error::Result;
 use crate::models::{ModelProvider, dispatch_model};
 use crate::prompt::PromptEngine;
 use crate::session::Session;
@@ -89,42 +89,10 @@ impl Agent {
         super::AgentBuilder::new()
     }
 
-    /// Runs the agent and returns a channel receiver for [`AgentEvent`]s.
-    ///
-    /// The agent is consumed (may only be run once).
-    pub async fn run(&mut self) -> Result<broadcast::Receiver<AgentEvent>> {
-        let runner = self
-            .runner
-            .take()
-            .ok_or_else(|| crate::error::BimoError::Agent("Agent already consumed".to_string()))?;
-
-        let (tx, rx) = broadcast::channel(256);
-
-        let todos: tools::SharedTodoList = tools::new_shared_todolist();
-        tools::init_todo_list(todos.clone());
-
-        let session_id = self.session.id.clone();
-
-        tokio::spawn(async move {
-            info!("Starting agent session: {}", session_id);
-            match runner.execute().await {
-                Ok(()) => {
-                    let _ = tx.send(AgentEvent::Done);
-                }
-                Err(e) => {
-                    let _ = tx.send(AgentEvent::Error(e.to_string()));
-                    let _ = tx.send(AgentEvent::Done);
-                }
-            }
-        });
-
-        Ok(rx)
-    }
-
     /// Runs the agent with streaming and returns a channel receiver.
     ///
     /// The agent is consumed (may only be run once).
-    pub async fn run_stream(&mut self) -> Result<broadcast::Receiver<AgentEvent>> {
+    pub async fn run(&mut self) -> Result<broadcast::Receiver<AgentEvent>> {
         let runner = self
             .runner
             .take()
@@ -140,7 +108,7 @@ impl Agent {
 
         tokio::spawn(async move {
             info!("Starting agent stream session: {}", session_id);
-            runner.execute_stream(tx, session, None).await;
+            runner.execute(tx, session, None).await;
         });
 
         Ok(rx)
@@ -155,7 +123,7 @@ impl Agent {
     /// the next step). Dropping the sender resumes execution.
     ///
     /// The agent is consumed (may only be run once).
-    pub async fn run_stream_steerable(
+    pub async fn run_steerable(
         &mut self,
     ) -> Result<(broadcast::Receiver<AgentEvent>, mpsc::Sender<SteerCommand>)> {
         let runner = self
@@ -174,7 +142,7 @@ impl Agent {
 
         tokio::spawn(async move {
             info!("Starting steerable agent stream session: {}", session_id);
-            runner.execute_stream(tx, session, Some(steer_rx)).await;
+            runner.execute(tx, session, Some(steer_rx)).await;
         });
 
         Ok((rx, steer_tx))
@@ -276,37 +244,6 @@ impl Agent {
 }
 
 impl AgentRunner {
-    /// Builds a fully-configured `LanguageModelRequest` (tools + stop condition).
-    fn build_request<M: LanguageModel + TextInputSupport + ToolCallSupport>(
-        &self,
-        model: M,
-    ) -> LanguageModelRequest<M> {
-        let tools = tools::all_tools(&self.disabled_tools);
-        let mut req_builder = LanguageModelRequest::<M>::builder()
-            .model(model)
-            .system(&self.system_prompt)
-            .prompt(&self.user_prompt);
-        for tool in tools {
-            req_builder = req_builder.with_tool(tool);
-        }
-        req_builder
-            .stop_when(aisdk::core::utils::step_count_is(self.max_steps))
-            .build()
-    }
-
-    /// Runs the model non-streaming — all tool calls complete before returning.
-    async fn execute_model<M: LanguageModel + TextInputSupport + ToolCallSupport>(
-        &self,
-        model: M,
-    ) -> Result<()> {
-        let mut request = self.build_request(model);
-        request
-            .generate_text()
-            .await
-            .map_err(|e| BimoError::Agent(e.to_string()))?;
-        Ok(())
-    }
-
     /// Writes an event to the debug log file when debug mode is enabled.
     fn persist_event(&self, event: &AgentEvent) {
         if self.debug {
@@ -352,13 +289,8 @@ impl AgentRunner {
         .await
     }
 
-    /// Runs the agent (non-streaming) — builds the model then executes.
-    async fn execute(self) -> Result<()> {
-        dispatch_model!(self.build_model().await?, self, execute_model)
-    }
-
     /// Runs the agent with streaming — emits [`AgentEvent`]s into the channel.
-    async fn execute_stream(
+    async fn execute(
         self,
         tx: broadcast::Sender<AgentEvent>,
         session: Session,
@@ -372,12 +304,12 @@ impl AgentRunner {
                 return;
             }
         };
-        dispatch_model!(model, self, execute_stream_loop, tx, session, steer_rx)
+        dispatch_model!(model, self, execute_loop, tx, session, steer_rx)
     }
 
     /// Builds a single-generation `LanguageModelOptions` carrying the running
     /// conversation and the enabled tools.
-    fn build_stream_options<M: LanguageModel + ToolCallSupport>(
+    fn build_options<M: LanguageModel + ToolCallSupport>(
         &self,
         model: M,
         messages: Messages,
@@ -398,7 +330,7 @@ impl AgentRunner {
     /// When `steer_rx` is `Some`, the run pauses before executing each proposed
     /// tool call and waits for a [`SteerCommand`]. Conversation messages are
     /// appended to `session` and persisted as the run progresses.
-    async fn execute_stream_loop<M: LanguageModel + ToolCallSupport>(
+    async fn execute_loop<M: LanguageModel + ToolCallSupport>(
         self,
         model: M,
         tx: broadcast::Sender<AgentEvent>,
@@ -428,7 +360,7 @@ impl AgentRunner {
             }
             steps += 1;
 
-            let options = self.build_stream_options(model.clone(), working.clone());
+            let options = self.build_options(model.clone(), working.clone());
             let mut m = model.clone();
             let mut stream = match m.stream_text(options).await {
                 Ok(s) => s,
