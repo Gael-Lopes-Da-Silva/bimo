@@ -7,6 +7,7 @@ use tokio::sync::RwLock;
 use tracing::{info, warn};
 
 use super::entry::{ProviderEntry, ProviderMap};
+use super::local::LocalProviderRegistry;
 use crate::config::{ApiFormat, Provider};
 use crate::error::{BimoError, Result};
 
@@ -174,6 +175,43 @@ impl CloudProviderRegistry {
     pub async fn provider_count(&self) -> usize {
         let map = self.providers.read().await;
         map.len()
+    }
+
+    /// Looks up a provider by id or name — configured providers first,
+    /// then built-in locals, then this registry.
+    pub async fn resolve_provider(
+        &self,
+        id_or_name: &str,
+        configured: &[Provider],
+    ) -> Option<Provider> {
+        let lower = id_or_name.to_lowercase();
+        let from_config = configured
+            .iter()
+            .find(|p| p.id.to_lowercase() == lower || p.name.to_lowercase() == lower)
+            .cloned();
+        if from_config.is_some() {
+            return from_config;
+        }
+        let from_builtin = LocalProviderRegistry::new().find(id_or_name);
+        if from_builtin.is_some() {
+            return from_builtin;
+        }
+        self.find_provider(id_or_name)
+            .await
+            .filter(|e| !matches!(e.api_format(), crate::config::ApiFormat::Other(_)))
+            .map(|e| e.to_provider())
+    }
+
+    /// Resolves base URLs for configured cloud providers from this registry.
+    pub async fn resolve_base_urls(&self, configured: &mut [Provider]) {
+        for provider in configured.iter_mut() {
+            if provider.is_cloud()
+                && provider.base_url.is_empty()
+                && let Some(url) = self.provider_base_url(&provider.id).await
+            {
+                provider.base_url = url;
+            }
+        }
     }
 }
 

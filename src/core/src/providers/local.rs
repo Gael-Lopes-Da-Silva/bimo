@@ -1,6 +1,9 @@
 //! Local provider registry — built-in local providers.
 
+use std::time::Duration;
+
 use crate::config::{ApiFormat, Provider};
+use crate::error::BimoError;
 
 /// Registry of built-in local providers known to the system
 /// (ollama, lmstudio, vllm, llamacpp).
@@ -49,5 +52,44 @@ impl LocalProviderRegistry {
         self.builtin()
             .into_iter()
             .find(|p| p.id.to_lowercase() == lower || p.name.to_lowercase() == lower)
+    }
+
+    /// Fetches available models from a provider's `/v1/models` endpoint.
+    pub async fn discover_models(&self, provider: &Provider) -> crate::Result<Vec<String>> {
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(5))
+            .build()
+            .map_err(|e| BimoError::Msg(format!("Failed to create HTTP client: {e}")))?;
+
+        let base = provider.base_url.trim_end_matches('/');
+        let url = format!("{base}/models");
+        let resp = client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| BimoError::Msg(format!("Failed to fetch models: {e}")))?;
+        let data: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| BimoError::Msg(format!("Failed to parse models response: {e}")))?;
+        let models = data["data"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|m| m["id"].as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+        Ok(models)
+    }
+
+    /// Auto-discovers models and updates `provider.models` with the result.
+    pub async fn auto_discover_models(&self, provider: &mut Provider) {
+        match self.discover_models(provider).await {
+            Ok(models) if !models.is_empty() => {
+                provider.models = models;
+            }
+            _ => {}
+        }
     }
 }

@@ -18,10 +18,7 @@ pub use config::{ApiFormat, Provider, ProviderType, ProvidersFile, Settings};
 pub use error::{BimoError, Result};
 pub use models::{ModelEntry, ModelRegistry};
 pub use prompt::PromptEngine;
-pub use providers::{
-    CloudProviderRegistry, LocalProviderRegistry, auto_discover_models, discover_models,
-    resolve_from_registry, resolve_provider,
-};
+pub use providers::{CloudProviderRegistry, LocalProviderRegistry};
 pub use session::{Message, Session, SessionManager};
 pub use skill::{Skill, disable_skill, enable_skill, filter_enabled};
 pub use tools::{TodoItem, TodoList, TodoPriority, TodoStatus};
