@@ -343,18 +343,18 @@ impl AgentRunner {
         }
     }
 
-    /// Captures a filesystem snapshot of the project before the run and
-    /// records it against the session, so undoing this prompt can also revert
-    /// the file changes. Best-effort: failures (no project, not a git
-    /// repository, snapshots disabled) are logged and skipped.
+    /// Starts a new run on the session: discards any pending undo history (a
+    /// new prompt without a redo invalidates it), records the run, and
+    /// best-effort captures a filesystem snapshot of the project before the
+    /// run so undoing this prompt can also revert the file changes. Failures
+    /// (no project, not a git repository, snapshots disabled) are logged and
+    /// skipped.
     fn capture_before_snapshot(&self, session: &mut Session) {
-        if !self.snapshots_enabled {
-            return;
-        }
-        let Some(dir) = self.project_dir.as_deref() else {
-            return;
-        };
-        match session.capture_snapshot(Some(dir), Some(self.user_prompt.clone())) {
+        let dir = self
+            .snapshots_enabled
+            .then(|| self.project_dir.clone())
+            .flatten();
+        match session.begin_run(self.user_prompt.clone(), dir.as_deref()) {
             Some(id) => info!(
                 "Captured filesystem snapshot {id} for session {}",
                 session.id

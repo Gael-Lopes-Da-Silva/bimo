@@ -22,7 +22,7 @@ pub use error::{BimoError, Result};
 pub use models::{ModelEntry, ModelRegistry};
 pub use prompt::PromptEngine;
 pub use providers::{CloudProviderRegistry, LocalProviderRegistry};
-pub use session::{Message, Session, SessionManager};
+pub use session::{Message, Session, SessionManager, UndoBatch};
 pub use skill::Skill;
 pub use snapshot::{Snapshot, SnapshotRecord};
 pub use tools::{TodoItem, TodoList, TodoPriority, TodoStatus};

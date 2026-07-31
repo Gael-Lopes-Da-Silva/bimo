@@ -40,12 +40,19 @@ pub struct Snapshot {
     pub created_at: DateTime<Utc>,
 }
 
-/// A snapshot recorded against a session, linking it to the prompt that
-/// triggered the run so the UI can undo/redo file changes per prompt.
+/// Metadata for a single agent run, linking its prompt to the filesystem
+/// snapshots captured around it so the UI can undo/redo file changes per
+/// prompt.
+///
+/// One record is recorded per run, even when no filesystem snapshot could be
+/// captured; the [`id`](Self::id) is then `None` and undo/redo still rewinds
+/// the conversation, just not the files.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SnapshotRecord {
-    /// Snapshot id captured before the run (the undo target).
-    pub id: String,
+    /// Snapshot id captured before the run (the undo target). `None` when no
+    /// snapshot was captured (snapshots disabled, not a git repository, ...).
+    #[serde(default)]
+    pub id: Option<String>,
     /// Optional snapshot id captured after the run (the redo target).
     #[serde(default)]
     pub after: Option<String>,
