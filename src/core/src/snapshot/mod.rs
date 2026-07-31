@@ -40,9 +40,9 @@ pub struct Snapshot {
     pub created_at: DateTime<Utc>,
 }
 
-/// Metadata for a single agent run, linking its prompt to the filesystem
-/// snapshots captured around it so the UI can undo/redo file changes per
-/// prompt.
+/// Metadata for a single agent run, linking its triggering user message to the
+/// filesystem snapshots captured around it so the UI can undo/redo file
+/// changes per message.
 ///
 /// One record is recorded per run, even when no filesystem snapshot could be
 /// captured; the [`id`](Self::id) is then `None` and undo/redo still rewinds
@@ -56,9 +56,11 @@ pub struct SnapshotRecord {
     /// Optional snapshot id captured after the run (the redo target).
     #[serde(default)]
     pub after: Option<String>,
-    /// The user prompt that triggered the run, if known.
+    /// Id of the user message that triggered the run, if known. `None` for
+    /// records written before message ids existed; those are inert for
+    /// undo/redo targeting.
     #[serde(default)]
-    pub prompt: Option<String>,
+    pub message_id: Option<String>,
     pub created_at: DateTime<Utc>,
 }
 

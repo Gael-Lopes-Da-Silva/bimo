@@ -17,9 +17,17 @@ pub use manager::SessionManager;
 /// A single message in a session conversation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
+    #[serde(default = "default_message_id")]
+    pub id: String,
     pub role: String,
     pub content: String,
     pub timestamp: DateTime<Utc>,
+}
+
+/// Generates a fresh id for messages loaded from files written before message
+/// ids existed.
+fn default_message_id() -> String {
+    Uuid::new_v4().to_string()
 }
 
 /// A batch of conversation messages and run metadata removed by
@@ -31,9 +39,6 @@ pub struct Message {
 /// messages chronologically.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UndoBatch {
-    /// The user prompt this batch was cut at. Used to target
-    /// [`Session::redo`].
-    pub prompt: String,
     /// The conversation messages removed by the undo, in order (the first
     /// message is the cut user prompt).
     pub messages: Vec<Message>,
@@ -97,14 +102,17 @@ impl Session {
         }
     }
 
-    /// Adds a message and updates the timestamp.
-    pub fn add_message(&mut self, role: String, content: String) {
+    /// Adds a message and updates the timestamp. Returns the message id.
+    pub fn add_message(&mut self, role: String, content: String) -> String {
+        let id = default_message_id();
         self.messages.push(Message {
+            id: id.clone(),
             role,
             content,
             timestamp: Utc::now(),
         });
         self.updated_at = Utc::now();
+        id
     }
 
     /// Returns `true` if the session has not been updated within `ttl_hours`.
@@ -309,8 +317,8 @@ impl Session {
     }
 
     /// Best-effort capture of a filesystem snapshot of `project_dir` for the
-    /// run identified by `prompt`, recorded against this session and persisted
-    /// with it.
+    /// run triggered by the user message `message_id`, recorded against this
+    /// session and persisted with it.
     ///
     /// A run record is always appended, so run tracking (and therefore
     /// undo/redo) works even when no snapshot could be captured (no project
@@ -321,12 +329,12 @@ impl Session {
     pub fn capture_snapshot(
         &mut self,
         project_dir: Option<&Path>,
-        prompt: Option<String>,
+        message_id: Option<String>,
     ) -> Option<String> {
         let mut record = crate::snapshot::SnapshotRecord {
             id: None,
             after: None,
-            prompt,
+            message_id,
             created_at: Utc::now(),
         };
         let captured = project_dir.and_then(|dir| match crate::snapshot::capture_snapshot(dir) {
@@ -348,14 +356,14 @@ impl Session {
         captured
     }
 
-    /// Starts a new agent run for `prompt`.
+    /// Starts a new agent run for the user message `message_id`.
     ///
     /// A new user prompt without a redo invalidates the pending undo history,
     /// so it is discarded (and its filesystem snapshots cleaned up) before the
     /// run is recorded. See [`capture_snapshot`](Self::capture_snapshot).
-    pub fn begin_run(&mut self, prompt: String, project_dir: Option<&Path>) -> Option<String> {
+    pub fn begin_run(&mut self, message_id: &str, project_dir: Option<&Path>) -> Option<String> {
         self.clear_undo_stack();
-        self.capture_snapshot(project_dir, Some(prompt))
+        self.capture_snapshot(project_dir, Some(message_id.to_string()))
     }
 
     /// Discards the undo history, deleting any filesystem snapshots it still
@@ -391,65 +399,40 @@ impl Session {
         self.updated_at = Utc::now();
     }
 
-    /// Rewinds the conversation to `target` — the last user prompt by default,
-    /// or any user prompt in the conversation — removing that prompt and
-    /// everything after it.
+    /// Rewinds the conversation to `target` — the last user message by default,
+    /// or the user message with that id — removing it and everything after it.
     ///
     /// The removed messages and their run metadata are pushed onto the undo
-    /// stack for [`redo`](Self::redo). If `target` is `None`, the snapshot
-    /// captured when the last user prompt was sent is applied to the project
-    /// files; otherwise the snapshot captured when the chosen prompt was sent
-    /// is applied. Filesystem restore is best-effort: a missing or failing
-    /// snapshot only logs a warning and the conversation is still rewound.
+    /// stack for [`redo`](Self::redo). When the target is the user message that
+    /// triggered a recorded run, the snapshot captured when that message was
+    /// sent is applied to the project files; otherwise (a steering message, a
+    /// message without a run record) only the conversation is rewound.
+    /// Filesystem restore is best-effort: a missing or failing snapshot only
+    /// logs a warning and the conversation is still rewound.
     ///
     /// # Errors
     ///
     /// Returns a `BimoError::Session` when there is nothing to undo or `target`
-    /// does not match any user prompt in the conversation.
+    /// does not match any user message in the conversation.
     pub fn undo(&mut self, target: Option<&str>) -> crate::Result<()> {
-        let positions = self.run_prompt_positions();
+        let positions = self.run_message_positions();
 
-        let target_idx = match target {
-            Some(prompt) => self
-                .snapshots
+        let cut = match target {
+            Some(id) => self
+                .messages
                 .iter()
-                .rposition(|r| r.prompt.as_deref() == Some(prompt)),
-            None => self.snapshots.len().checked_sub(1),
+                .position(|m| m.role == "user" && m.id == id)
+                .ok_or_else(|| {
+                    crate::error::BimoError::Session(format!(
+                        "Cannot undo: no user message with id {id}"
+                    ))
+                })?,
+            None => self
+                .messages
+                .iter()
+                .rposition(|m| m.role == "user")
+                .ok_or_else(|| crate::error::BimoError::Session("Nothing to undo".to_string()))?,
         };
-
-        let cut = match target_idx.and_then(|idx| positions.get(idx).copied().flatten()) {
-            Some(pos) => pos,
-            None => {
-                // No recorded run matches (legacy session, or the run predates
-                // run tracking). Fall back to the last matching user message.
-                let prompt = match target {
-                    Some(prompt) => prompt.to_string(),
-                    None => self
-                        .messages
-                        .iter()
-                        .rev()
-                        .find(|m| m.role == "user")
-                        .map(|m| m.content.clone())
-                        .ok_or_else(|| {
-                            crate::error::BimoError::Session("Nothing to undo".to_string())
-                        })?,
-                };
-                self.messages
-                    .iter()
-                    .rposition(|m| m.role == "user" && m.content == prompt)
-                    .ok_or_else(|| {
-                        crate::error::BimoError::Session(format!(
-                            "Cannot undo: no user prompt matching {prompt:?}"
-                        ))
-                    })?
-            }
-        };
-
-        if cut == self.messages.len() {
-            return Err(crate::error::BimoError::Session(
-                "Nothing to undo".to_string(),
-            ));
-        }
 
         let removed_messages: Vec<Message> = self.messages[cut..].to_vec();
         let first_removed = positions
@@ -460,11 +443,10 @@ impl Session {
             None => Vec::new(),
         };
 
-        // Apply the snapshot captured when the target prompt was sent. Only
-        // when the target run's record is present in the current conversation.
-        if let Some(idx) = target_idx
-            && positions.get(idx).is_some_and(Option::is_some)
-            && let Some(id) = self.snapshots.get(idx).and_then(|r| r.id.clone())
+        // Apply the snapshot captured when the target message was sent, when
+        // the target is the user message of a recorded run.
+        if let Some(ri) = positions.iter().position(|p| *p == Some(cut))
+            && let Some(id) = self.snapshots.get(ri).and_then(|r| r.id.clone())
         {
             Self::restore_filesystem(&id, "undo");
         }
@@ -474,13 +456,7 @@ impl Session {
             self.snapshots.truncate(ri);
         }
 
-        let prompt = removed_messages
-            .first()
-            .map(|m| m.content.clone())
-            .unwrap_or_default();
-
         self.undo_stack.push(UndoBatch {
-            prompt,
             messages: removed_messages,
             snapshots: removed_snapshots,
         });
@@ -491,7 +467,7 @@ impl Session {
 
     /// Restores the conversation and files removed by the most recent
     /// [`undo`](Self::undo) — or, when `target` is given, by every undo down to
-    /// the operation cut at that user prompt.
+    /// the operation that removed the message with that id.
     ///
     /// The filesystem is reverted to the snapshot captured at the agent loop
     /// end of the last restored run (best-effort). Popping the undo history is
@@ -500,7 +476,7 @@ impl Session {
     /// # Errors
     ///
     /// Returns a `BimoError::Session` when there is nothing to redo or `target`
-    /// does not match any undone run.
+    /// does not match any undone message.
     pub fn redo(&mut self, target: Option<&str>) -> crate::Result<()> {
         if self.undo_stack.is_empty() {
             return Err(crate::error::BimoError::Session(
@@ -510,14 +486,14 @@ impl Session {
 
         let pop_count = match target {
             None => 1,
-            Some(prompt) => {
+            Some(id) => {
                 let idx = self
                     .undo_stack
                     .iter()
-                    .rposition(|b| b.prompt == prompt)
+                    .rposition(|b| b.messages.iter().any(|m| m.id == id))
                     .ok_or_else(|| {
                         crate::error::BimoError::Session(format!(
-                            "Cannot redo: no undone run matching {prompt:?}"
+                            "Cannot redo: no undone message with id {id}"
                         ))
                     })?;
                 self.undo_stack.len() - idx
@@ -529,7 +505,7 @@ impl Session {
             popped.push(self.undo_stack.pop().expect("pop_count within bounds"));
         }
 
-        // The last batch popped holds the chosen prompt (or the top of the
+        // The last batch popped holds the target message (or the top of the
         // stack); its final run's after-run snapshot is the agent loop end.
         let redo_snapshot = popped
             .last()
@@ -549,67 +525,41 @@ impl Session {
         Ok(())
     }
 
-    /// Copies the session into a new, independent session forked at
-    /// `message_index`.
+    /// Copies the session into a new, independent session — a full clone from
+    /// the last sent message, whether that is the agent loop end or the last
+    /// steering message.
     ///
-    /// The fork keeps every message up to and including `message_index` and
-    /// copies the whole undo history and run/snapshot metadata, so undoing or
-    /// redoing in the fork never affects the parent session (and vice versa).
-    /// The fork is persisted with a new id.
-    ///
-    /// # Errors
-    ///
-    /// Returns a `BimoError::Session` when `message_index` is out of range.
-    pub fn fork(&self, message_index: usize) -> crate::Result<Session> {
-        if message_index >= self.messages.len() {
-            return Err(crate::error::BimoError::Session(format!(
-                "Cannot fork at message {message_index}: session has {} messages",
-                self.messages.len()
-            )));
-        }
-
+    /// The fork copies the whole context: messages, archived messages, todo
+    /// list, run/snapshot metadata and undo history, so undoing or redoing in
+    /// the fork never affects the parent session (and vice versa). The fork is
+    /// persisted with a new id.
+    pub fn fork(&self) -> crate::Result<Session> {
         let mut fork = self.clone();
         fork.id = Uuid::new_v4().to_string();
         fork.created_at = Utc::now();
         fork.updated_at = Utc::now();
-        fork.messages.truncate(message_index + 1);
-
-        // Keep only the runs whose prompt lies within the fork's messages.
-        let positions = self.run_prompt_positions();
-        let last_kept = positions
-            .iter()
-            .enumerate()
-            .filter_map(|(i, pos)| pos.filter(|p| *p <= message_index).map(|_| i))
-            .next_back();
-        match last_kept {
-            Some(idx) => fork.snapshots.truncate(idx + 1),
-            None => fork.snapshots.clear(),
-        }
-
         fork.save()?;
         Ok(fork)
     }
 
-    /// Returns the message index of each run's user prompt in `messages`,
-    /// `None` when the prompt cannot be located (e.g. the run was archived by
-    /// compaction). Prompts are matched sequentially so repeated prompts map
-    /// to the correct messages.
-    fn run_prompt_positions(&self) -> Vec<Option<usize>> {
-        let mut positions = Vec::with_capacity(self.snapshots.len());
-        let mut search_from = 0usize;
-        for record in &self.snapshots {
-            let pos = record.prompt.as_deref().and_then(|prompt| {
-                self.messages[search_from..]
-                    .iter()
-                    .position(|m| m.role == "user" && m.content == prompt)
-                    .map(|rel| search_from + rel)
-            });
-            if let Some(p) = pos {
-                search_from = p + 1;
-            }
-            positions.push(pos);
-        }
-        positions
+    /// Returns the message index of each run's user message in `messages`,
+    /// `None` when the message cannot be located (e.g. the run was archived by
+    /// compaction, or the record predates message ids).
+    fn run_message_positions(&self) -> Vec<Option<usize>> {
+        let index_by_id: std::collections::HashMap<&str, usize> = self
+            .messages
+            .iter()
+            .enumerate()
+            .map(|(i, m)| (m.id.as_str(), i))
+            .collect();
+        self.snapshots
+            .iter()
+            .map(|r| {
+                r.message_id
+                    .as_deref()
+                    .and_then(|id| index_by_id.get(id).copied())
+            })
+            .collect()
     }
 
     /// Best-effort restore of the project filesystem from a snapshot.

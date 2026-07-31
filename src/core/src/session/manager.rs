@@ -167,6 +167,22 @@ impl SessionManager {
         Ok(session)
     }
 
+    /// Forks the session `id` into a new independent session and returns it.
+    ///
+    /// # Errors
+    ///
+    /// Returns a `BimoError::Session` when no session with that id exists.
+    pub async fn fork(&self, id: &str) -> crate::Result<Session> {
+        let session = self
+            .get(id)
+            .await
+            .ok_or_else(|| crate::error::BimoError::Session(format!("Session {id} not found")))?;
+        let fork = session.fork()?;
+        let mut map = self.sessions.write().await;
+        map.insert(fork.id.clone(), fork.clone());
+        Ok(fork)
+    }
+
     /// Retrieves a session by id.
     pub async fn get(&self, id: &str) -> Option<Session> {
         let map = self.sessions.read().await;
