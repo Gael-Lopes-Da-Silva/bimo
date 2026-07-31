@@ -7,6 +7,7 @@ use aisdk::core::DynamicModel;
 use aisdk::providers::{Anthropic, Google, OpenAICompatible};
 
 use crate::config::ApiFormat;
+use crate::error::{BimoError, Result};
 
 /// Erased OpenAI-compatible model type used at runtime.
 type OpenAIModel = OpenAICompatible<DynamicModel>;
@@ -29,14 +30,16 @@ impl ModelProvider {
         base_url: &str,
         model_name: &str,
         api_key: Option<String>,
-    ) -> std::result::Result<Self, String> {
+    ) -> Result<Self> {
         match api_format {
             ApiFormat::OpenAICompatible | ApiFormat::OpenAI => {
                 Self::build_openai(base_url, model_name, api_key).await
             }
             ApiFormat::Google => Self::build_google(base_url, model_name, api_key).await,
             ApiFormat::Anthropic => Self::build_anthropic(base_url, model_name, api_key).await,
-            ApiFormat::Other(fmt) => Err(format!("unsupported API format: {fmt}")),
+            ApiFormat::Other(fmt) => Err(BimoError::Provider(format!(
+                "unsupported API format: {fmt}"
+            ))),
         }
     }
 
@@ -45,7 +48,7 @@ impl ModelProvider {
         base_url: &str,
         model_name: &str,
         api_key: Option<String>,
-    ) -> std::result::Result<Self, String> {
+    ) -> Result<Self> {
         let mut builder = OpenAICompatible::<DynamicModel>::builder()
             .base_url(base_url)
             .model_name(model_name);
@@ -55,7 +58,9 @@ impl ModelProvider {
         builder
             .build()
             .map(|m| Self::OpenAI(Box::new(m)))
-            .map_err(|e| format!("Failed to build OpenAI-compatible model: {e}"))
+            .map_err(|e| {
+                BimoError::Provider(format!("Failed to build OpenAI-compatible model: {e}"))
+            })
     }
 
     /// Builds an Anthropic model client.
@@ -63,7 +68,7 @@ impl ModelProvider {
         base_url: &str,
         model_name: &str,
         api_key: Option<String>,
-    ) -> std::result::Result<Self, String> {
+    ) -> Result<Self> {
         let mut builder = Anthropic::<DynamicModel>::builder()
             .base_url(base_url)
             .model_name(model_name);
@@ -73,7 +78,7 @@ impl ModelProvider {
         builder
             .build()
             .map(|m| Self::Anthropic(Box::new(m)))
-            .map_err(|e| format!("Failed to build Anthropic model: {e}"))
+            .map_err(|e| BimoError::Provider(format!("Failed to build Anthropic model: {e}")))
     }
 
     /// Builds a Google model client.
@@ -81,7 +86,7 @@ impl ModelProvider {
         base_url: &str,
         model_name: &str,
         api_key: Option<String>,
-    ) -> std::result::Result<Self, String> {
+    ) -> Result<Self> {
         let mut builder = Google::<DynamicModel>::builder()
             .base_url(base_url)
             .model_name(model_name);
@@ -91,7 +96,7 @@ impl ModelProvider {
         builder
             .build()
             .map(|m| Self::Google(Box::new(m)))
-            .map_err(|e| format!("Failed to build Google model: {e}"))
+            .map_err(|e| BimoError::Provider(format!("Failed to build Google model: {e}")))
     }
 }
 

@@ -35,13 +35,7 @@ pub fn run_command(command: String, workdir: Option<String>, timeout_secs: Optio
         .spawn()
         .map_err(|e| format!("Failed to execute command: {}", e))?;
 
-    let output = wait_with_timeout(child, timeout).map_err(|_| {
-        format!(
-            "Command timed out after {}s: {}",
-            timeout.as_secs(),
-            command
-        )
-    })?;
+    let output = wait_with_timeout(child, timeout, &command).map_err(|e| e.to_string())?;
 
     let mut result = String::new();
 
@@ -81,7 +75,8 @@ pub fn run_command(command: String, workdir: Option<String>, timeout_secs: Optio
 fn wait_with_timeout(
     mut child: std::process::Child,
     timeout: Duration,
-) -> Result<std::process::Output, String> {
+    command: &str,
+) -> crate::Result<std::process::Output> {
     let start = std::time::Instant::now();
     loop {
         match child.try_wait() {
@@ -107,11 +102,15 @@ fn wait_with_timeout(
             Ok(None) => {
                 if start.elapsed() >= timeout {
                     let _ = child.kill();
-                    return Err("timeout".to_string());
+                    return Err(crate::error::BimoError::Msg(format!(
+                        "Command timed out after {}s: {}",
+                        timeout.as_secs(),
+                        command
+                    )));
                 }
                 std::thread::sleep(Duration::from_millis(50));
             }
-            Err(e) => return Err(format!("Process error: {}", e)),
+            Err(e) => return Err(crate::error::BimoError::Io(e)),
         }
     }
 }

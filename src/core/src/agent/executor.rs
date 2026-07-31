@@ -7,7 +7,7 @@ use tokio::sync::broadcast;
 use tracing::info;
 
 use crate::config::ApiFormat;
-use crate::error::Result;
+use crate::error::{BimoError, Result};
 use crate::models::{ModelProvider, dispatch_model};
 use crate::prompt::PromptEngine;
 use crate::session::Session;
@@ -91,7 +91,7 @@ impl Agent {
                     let _ = tx.send(AgentEvent::Done);
                 }
                 Err(e) => {
-                    let _ = tx.send(AgentEvent::Error(e));
+                    let _ = tx.send(AgentEvent::Error(e.to_string()));
                     let _ = tx.send(AgentEvent::Done);
                 }
             }
@@ -242,9 +242,12 @@ impl AgentRunner {
     async fn execute_model<M: LanguageModel + TextInputSupport + ToolCallSupport>(
         &self,
         model: M,
-    ) -> std::result::Result<(), String> {
+    ) -> Result<()> {
         let mut request = self.build_request(model);
-        request.generate_text().await.map_err(|e| e.to_string())?;
+        request
+            .generate_text()
+            .await
+            .map_err(|e| BimoError::Agent(e.to_string()))?;
         Ok(())
     }
 
@@ -320,7 +323,7 @@ impl AgentRunner {
     }
 
     /// Builds a [`ModelProvider`] from the runner's config fields.
-    async fn build_model(&self) -> std::result::Result<ModelProvider, String> {
+    async fn build_model(&self) -> Result<ModelProvider> {
         ModelProvider::build(
             &self.api_format,
             &self.provider_base_url,
@@ -331,7 +334,7 @@ impl AgentRunner {
     }
 
     /// Runs the agent (non-streaming) — builds the model then executes.
-    async fn execute(self) -> std::result::Result<(), String> {
+    async fn execute(self) -> Result<()> {
         dispatch_model!(self.build_model().await?, self, execute_model)
     }
 
@@ -340,7 +343,7 @@ impl AgentRunner {
         let model = match self.build_model().await {
             Ok(m) => m,
             Err(e) => {
-                self.emit_event(AgentEvent::Error(e), &tx);
+                self.emit_event(AgentEvent::Error(e.to_string()), &tx);
                 self.emit_event(AgentEvent::Done, &tx);
                 return;
             }

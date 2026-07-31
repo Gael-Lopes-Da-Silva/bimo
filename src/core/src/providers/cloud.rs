@@ -53,7 +53,7 @@ impl CloudProviderRegistry {
 
     /// Forces a fresh fetch from models.dev and updates the local cache.
     pub async fn refresh(&self) -> Result<()> {
-        let providers = self.fetch_remote().await.map_err(BimoError::Msg)?;
+        let providers = self.fetch_remote().await?;
         let mut map = self.providers.write().await;
         *map = providers;
         self.save_cache().await?;
@@ -63,7 +63,7 @@ impl CloudProviderRegistry {
     /// Refreshes the entry for a single provider from models.dev, updating the
     /// shared map and local cache. Returns an error if the provider is unknown.
     pub async fn refresh_provider(&self, provider_id: &str) -> Result<()> {
-        let providers = self.fetch_remote().await.map_err(BimoError::Msg)?;
+        let providers = self.fetch_remote().await?;
         let entry = providers.get(provider_id).cloned().ok_or_else(|| {
             BimoError::Msg(format!("Provider '{provider_id}' not found in models.dev"))
         })?;
@@ -75,25 +75,25 @@ impl CloudProviderRegistry {
         Ok(())
     }
 
-    async fn fetch_remote(&self) -> std::result::Result<ProviderMap, String> {
+    async fn fetch_remote(&self) -> Result<ProviderMap> {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(10))
             .build()
-            .map_err(|e| format!("Failed to create HTTP client: {e}"))?;
+            .map_err(|e| BimoError::Msg(format!("Failed to create HTTP client: {e}")))?;
 
         let resp = client
             .get(MODELS_DEV_URL)
             .send()
             .await
-            .map_err(|e| format!("HTTP request failed: {e}"))?;
+            .map_err(|e| BimoError::Msg(format!("HTTP request failed: {e}")))?;
 
         let bytes = resp
             .bytes()
             .await
-            .map_err(|e| format!("Failed to read response body: {e}"))?;
+            .map_err(|e| BimoError::Msg(format!("Failed to read response body: {e}")))?;
 
-        let providers: ProviderMap =
-            serde_json::from_slice(&bytes).map_err(|e| format!("JSON parse failed: {e}"))?;
+        let providers: ProviderMap = serde_json::from_slice(&bytes)
+            .map_err(|e| BimoError::Msg(format!("JSON parse failed: {e}")))?;
 
         if let Err(e) = std::fs::write(&self.cache_path, &bytes) {
             warn!("Failed to write models cache: {e}");
