@@ -1,9 +1,9 @@
 //! Provider resolution — built-in locals, cloud registries, model discovery.
 
 mod cloud;
-mod entry;
 mod local;
+mod types;
 
 pub use cloud::CloudProviderRegistry;
-pub use entry::{ProviderEntry, ProviderMap};
 pub use local::LocalProviderRegistry;
+pub use types::{ProviderEntry, ProviderMap};

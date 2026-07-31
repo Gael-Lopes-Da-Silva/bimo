@@ -6,8 +6,8 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 
-use super::entry::{ProviderEntry, ProviderMap};
 use super::local::LocalProviderRegistry;
+use super::types::{ProviderEntry, ProviderMap};
 use crate::config::{ApiFormat, Provider};
 use crate::error::{BimoError, Result};
 
