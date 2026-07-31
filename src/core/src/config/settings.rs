@@ -61,7 +61,7 @@ fn default_max_steps() -> usize {
 }
 
 fn default_retry_attempts() -> usize {
-    3
+    10
 }
 
 fn default_retry_timeout_secs() -> u64 {
