@@ -3,9 +3,11 @@
 mod manager;
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::tools::{TodoList, is_builtin};
@@ -40,6 +42,13 @@ pub struct Session {
     /// applied to runs of that model unless overridden.
     #[serde(default)]
     pub reasoning_efforts: BTreeMap<String, String>,
+    /// Filesystem snapshots captured before agent runs, oldest first. Used to
+    /// revert file changes when rewinding the conversation (undo/redo).
+    #[serde(default)]
+    pub snapshots: Vec<crate::snapshot::SnapshotRecord>,
+    /// Id of the filesystem snapshot captured alongside the last checkpoint.
+    #[serde(default)]
+    pub checkpoint_snapshot: Option<String>,
     pub metadata: serde_json::Value,
 }
 
@@ -56,6 +65,8 @@ impl Session {
             disabled_tools: BTreeSet::new(),
             disabled_skills: BTreeSet::new(),
             reasoning_efforts: BTreeMap::new(),
+            snapshots: Vec::new(),
+            checkpoint_snapshot: None,
             metadata: serde_json::json!({}),
         }
     }
@@ -234,26 +245,130 @@ impl Session {
         Ok(serde_json::from_str(&content)?)
     }
 
-    /// Deletes the session file from disk.
+    /// Deletes the session file from disk, along with any filesystem
+    /// snapshots it owns (best-effort cleanup).
     pub fn delete(&self) -> crate::Result<()> {
         let path = self.path();
         if path.exists() {
             std::fs::remove_file(&path)?;
         }
+        let mut snapshot_ids: Vec<String> = self.snapshots.iter().map(|s| s.id.clone()).collect();
+        if let Some(id) = &self.checkpoint_snapshot {
+            snapshot_ids.push(id.clone());
+        }
+        for id in snapshot_ids {
+            match crate::snapshot::Snapshot::load(&id) {
+                Ok(snapshot) => {
+                    if let Err(e) = snapshot.delete() {
+                        warn!("Failed to clean up filesystem snapshot {id}: {e}");
+                    }
+                }
+                Err(e) => warn!("Failed to load filesystem snapshot {id} for cleanup: {e}"),
+            }
+        }
         Ok(())
     }
 
+    /// Best-effort capture of a filesystem snapshot of `project_dir`,
+    /// recorded against this session for later revert and persisted with it.
+    ///
+    /// Returns the snapshot id, or `None` when no snapshot could be captured
+    /// (no project directory, the project is not a git repository, or a
+    /// persistence failure). Snapshots depend on git; the conversation can
+    /// still be reverted even when this returns `None`, only the filesystem
+    /// cannot.
+    pub fn capture_snapshot(
+        &mut self,
+        project_dir: Option<&Path>,
+        prompt: Option<String>,
+    ) -> Option<String> {
+        let dir = project_dir?;
+        match crate::snapshot::capture_snapshot(dir) {
+            Ok(snapshot) => {
+                let id = snapshot.id.clone();
+                let created_at = snapshot.created_at;
+                self.snapshots.push(crate::snapshot::SnapshotRecord {
+                    id: id.clone(),
+                    after: None,
+                    prompt,
+                    created_at,
+                });
+                self.updated_at = Utc::now();
+                if let Err(e) = self.save() {
+                    warn!("Failed to persist session {}: {}", self.id, e);
+                }
+                Some(id)
+            }
+            Err(e) => {
+                warn!("Filesystem snapshot skipped for session {}: {}", self.id, e);
+                None
+            }
+        }
+    }
+
+    /// Links an after-run snapshot to the most recent recorded run (the redo
+    /// target for that run).
+    pub fn set_after_snapshot(&mut self, id: String) {
+        if let Some(last) = self.snapshots.last_mut() {
+            last.after = Some(id);
+        }
+        self.updated_at = Utc::now();
+    }
+
     /// Creates a branched checkpoint from the current session state.
-    pub fn branch_checkpoint(&self, branch_id: &str) -> crate::Result<Self> {
+    ///
+    /// When `project_dir` is given and is a git repository, a filesystem
+    /// snapshot is captured alongside the checkpoint so
+    /// [`restore_checkpoint`](Self::restore_checkpoint) can revert the
+    /// project's files as well as the conversation.
+    pub fn branch_checkpoint(
+        &self,
+        branch_id: &str,
+        project_dir: Option<&Path>,
+    ) -> crate::Result<Self> {
         let mut branch = self.clone();
         branch.id = format!("{}_{}", self.id, branch_id);
+        if let Some(dir) = project_dir {
+            match crate::snapshot::Snapshot::capture(dir) {
+                Ok(snapshot) => {
+                    let id = snapshot.id.clone();
+                    if let Err(e) = snapshot.save() {
+                        warn!("Failed to persist filesystem snapshot {id}: {e}");
+                    } else {
+                        branch.checkpoint_snapshot = Some(id);
+                    }
+                }
+                Err(e) => {
+                    warn!("No filesystem snapshot captured for checkpoint {branch_id}: {e}");
+                }
+            }
+        }
         branch.save()?;
         Ok(branch)
     }
 
-    /// Restores session to a checkpoint file by id.
+    /// Restores a session from a checkpoint file by id.
+    ///
+    /// When the checkpoint captured a filesystem snapshot, the project working
+    /// tree is reverted to that snapshot before the session is returned.
+    /// Filesystem restore is best-effort: if the snapshot is missing or fails
+    /// to restore, the conversation is still restored and a warning is logged.
     pub fn restore_checkpoint(checkpoint_id: &str) -> crate::Result<Self> {
-        Self::load(checkpoint_id)
+        let session = Self::load(checkpoint_id)?;
+        if let Some(snapshot_id) = session.checkpoint_snapshot.as_deref() {
+            match crate::snapshot::Snapshot::load(snapshot_id) {
+                Ok(snapshot) => match snapshot.restore() {
+                    Ok(()) => info!("Restored filesystem from snapshot {snapshot_id}"),
+                    Err(e) => warn!(
+                        "Failed to restore filesystem snapshot {snapshot_id} for checkpoint {checkpoint_id}: {e}"
+                    ),
+                },
+                Err(e) => warn!(
+                    "Failed to load filesystem snapshot {snapshot_id} for checkpoint {checkpoint_id}: {e}"
+                ),
+            }
+        }
+        Ok(session)
     }
 
     /// Exports session to Markdown file.

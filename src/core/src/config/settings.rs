@@ -42,6 +42,13 @@ pub struct Settings {
     /// Timeout in seconds before retrying a failed step.
     #[serde(default = "default_retry_timeout_secs")]
     pub retry_timeout_secs: u64,
+
+    /// Captures git-backed filesystem snapshots before agent runs so file
+    /// changes can be reverted when undoing a prompt. Only works in git
+    /// repositories. When disabled, undoing still rewinds the conversation
+    /// but cannot restore modified files.
+    #[serde(default = "default_snapshots")]
+    pub snapshots: bool,
 }
 
 fn default_session_ttl_hours() -> u64 {
@@ -68,6 +75,10 @@ fn default_retry_timeout_secs() -> u64 {
     5
 }
 
+fn default_snapshots() -> bool {
+    true
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -80,6 +91,7 @@ impl Default for Settings {
             debug: false,
             retry_attempts: default_retry_attempts(),
             retry_timeout_secs: default_retry_timeout_secs(),
+            snapshots: default_snapshots(),
         }
     }
 }

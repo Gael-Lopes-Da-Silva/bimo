@@ -11,6 +11,7 @@ pub mod prompt;
 pub mod providers;
 pub mod session;
 pub mod skill;
+pub mod snapshot;
 pub mod tools;
 
 pub use agent::parse_reasoning_effort;
@@ -23,6 +24,7 @@ pub use prompt::PromptEngine;
 pub use providers::{CloudProviderRegistry, LocalProviderRegistry};
 pub use session::{Message, Session, SessionManager};
 pub use skill::Skill;
+pub use snapshot::{Snapshot, SnapshotRecord};
 pub use tools::{TodoItem, TodoList, TodoPriority, TodoStatus};
 pub use tools::{
     edit_file, is_builtin, manage_todo, read_file, run_command, tool_names, write_file,

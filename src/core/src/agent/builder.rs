@@ -280,6 +280,8 @@ impl AgentBuilder {
             retry_timeout_secs: self
                 .retry_timeout_secs
                 .unwrap_or(self.settings.retry_timeout_secs),
+            project_dir: self.project_dir.clone(),
+            snapshots_enabled: self.settings.snapshots,
         };
 
         let session = self.session.unwrap_or_default();

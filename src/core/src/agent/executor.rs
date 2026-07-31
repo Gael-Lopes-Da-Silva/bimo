@@ -85,6 +85,11 @@ pub(crate) struct AgentRunner {
     pub disabled_tools: std::collections::BTreeSet<String>,
     pub retry_attempts: usize,
     pub retry_timeout_secs: u64,
+    /// Project root whose filesystem is snapshotted before the run, enabling
+    /// the UI to revert file changes when undoing the prompt.
+    pub project_dir: Option<std::path::PathBuf>,
+    /// Whether git-backed filesystem snapshots are enabled (see `Settings`).
+    pub snapshots_enabled: bool,
 }
 
 /// Maps a raw models.dev reasoning value to aisdk's [`ReasoningEffort`].
@@ -338,6 +343,50 @@ impl AgentRunner {
         }
     }
 
+    /// Captures a filesystem snapshot of the project before the run and
+    /// records it against the session, so undoing this prompt can also revert
+    /// the file changes. Best-effort: failures (no project, not a git
+    /// repository, snapshots disabled) are logged and skipped.
+    fn capture_before_snapshot(&self, session: &mut Session) {
+        if !self.snapshots_enabled {
+            return;
+        }
+        let Some(dir) = self.project_dir.as_deref() else {
+            return;
+        };
+        match session.capture_snapshot(Some(dir), Some(self.user_prompt.clone())) {
+            Some(id) => info!(
+                "Captured filesystem snapshot {id} for session {}",
+                session.id
+            ),
+            None => info!("No filesystem snapshot captured for session {}", session.id),
+        }
+    }
+
+    /// Captures a snapshot of the project after the run and links it to the
+    /// latest recorded run, so redo can reapply the file changes. Best-effort.
+    fn capture_after_snapshot(&self, session: &mut Session) {
+        if !self.snapshots_enabled {
+            return;
+        }
+        let Some(dir) = self.project_dir.as_deref() else {
+            return;
+        };
+        match crate::snapshot::capture_snapshot(dir) {
+            Ok(snapshot) => {
+                let id = snapshot.id.clone();
+                session.set_after_snapshot(id.clone());
+                info!(
+                    "Captured after-run snapshot {id} for session {}",
+                    session.id
+                );
+            }
+            Err(e) => {
+                warn!("After-run filesystem snapshot skipped: {e}");
+            }
+        }
+    }
+
     /// Builds a [`ModelProvider`] from the runner's config fields.
     async fn build_model(&self) -> Result<ModelProvider> {
         ModelProvider::build(
@@ -493,6 +542,7 @@ impl AgentRunner {
         mut steer_rx: Option<mpsc::Receiver<SteerCommand>>,
     ) {
         let mut working: Messages = Vec::new();
+        self.capture_before_snapshot(&mut session);
         if !self.system_prompt.is_empty() {
             working.push(Message::System(SystemMessage::new(
                 self.system_prompt.clone(),
@@ -657,6 +707,7 @@ impl AgentRunner {
             }
         }
 
+        self.capture_after_snapshot(&mut session);
         self.persist_session(&session);
         self.emit_event(AgentEvent::Done, &tx);
     }
