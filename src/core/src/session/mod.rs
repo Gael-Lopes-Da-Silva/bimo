@@ -25,6 +25,10 @@ pub struct Session {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub messages: Vec<Message>,
+    /// Messages removed by compaction, one batch per compaction. Kept for
+    /// display (e.g. TUI/GUI) but excluded from the agent context.
+    #[serde(default)]
+    pub archived_messages: Vec<Vec<Message>>,
     pub todo_list: TodoList,
     /// Names of tools disabled for this session.
     #[serde(default)]
@@ -43,6 +47,7 @@ impl Session {
             created_at: Utc::now(),
             updated_at: Utc::now(),
             messages: Vec::new(),
+            archived_messages: Vec::new(),
             todo_list: TodoList::new(),
             disabled_tools: BTreeSet::new(),
             disabled_skills: BTreeSet::new(),
@@ -200,6 +205,18 @@ impl Session {
                 "- **[{}] {}**: {}\n",
                 msg.role, msg.timestamp, msg.content
             ));
+        }
+        if !self.archived_messages.is_empty() {
+            md.push_str("\n## Archived messages\n\n");
+            for batch in &self.archived_messages {
+                for msg in batch {
+                    md.push_str(&format!(
+                        "- **[{}] {}**: {}\n",
+                        msg.role, msg.timestamp, msg.content
+                    ));
+                }
+                md.push('\n');
+            }
         }
         std::fs::write(path, md)?;
         Ok(())

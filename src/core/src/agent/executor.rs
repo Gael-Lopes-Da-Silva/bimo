@@ -218,9 +218,11 @@ impl Agent {
     /// 1. Renders COMPACT.md with the full conversation.
     /// 2. Calls the model (no tools, no stop condition) to get a summary.
     /// 3. Renders SUMMARY.md with that summary.
-    /// 4. Clears session.messages.
-    /// 5. Injects the rendered summary as a system message.
-    /// 6. Persists the session.
+    /// 4. Archives the old messages in `session.archived_messages` (kept for
+    ///    display, excluded from the agent context).
+    /// 5. Clears session.messages.
+    /// 6. Injects the rendered summary as a system message.
+    /// 7. Persists the session.
     ///
     /// Returns the summary text on success.
     pub async fn compact(&mut self) -> Result<String> {
@@ -259,6 +261,9 @@ impl Agent {
         let summary = response.text().unwrap_or_default();
         let rendered_summary = PromptEngine::render_summary(&summary);
 
+        self.session
+            .archived_messages
+            .push(self.session.messages.clone());
         self.session.messages.clear();
         self.session
             .add_message("system".to_string(), rendered_summary);
