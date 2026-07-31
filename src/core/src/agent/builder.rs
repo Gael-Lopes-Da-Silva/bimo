@@ -2,10 +2,10 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use tracing::info;
 
 use crate::agent::Agent;
 use crate::agent::executor::AgentRunner;
-use crate::agent::instructions::load_instructions;
 use crate::config::Provider;
 use crate::config::Settings;
 use crate::error::Result;
@@ -117,21 +117,87 @@ impl AgentBuilder {
         self
     }
 
+    /// Loads instruction content from project files in the following order:
+    ///   1. Project root files: AGENTS.md, CLAUDE.md, CODEX.md, GEMINI.md, CONTRIBUTING.md
+    ///   2. `.github/copilot-instructions.md`
+    ///   3. `.agents/instructions.md`
+    ///   4. `.ai/` subdirectories: `rules/`, `context/`, `workflows/`
+    fn load_instructions(&self) -> String {
+        let Some(project) = self.project_dir.as_deref() else {
+            return String::new();
+        };
+
+        let mut instructions = String::new();
+
+        for filename in &[
+            "AGENTS.md",
+            "CLAUDE.md",
+            "CODEX.md",
+            "GEMINI.md",
+            "CONTRIBUTING.md",
+        ] {
+            let path = project.join(filename);
+            if path.is_file()
+                && let Ok(content) = std::fs::read_to_string(&path)
+            {
+                info!("Loaded instructions from {filename}");
+                instructions.push_str(&content);
+                instructions.push('\n');
+            }
+        }
+
+        let copilot = project.join(".github").join("copilot-instructions.md");
+        if copilot.is_file()
+            && let Ok(content) = std::fs::read_to_string(&copilot)
+        {
+            info!("Loaded instructions from .github/copilot-instructions.md");
+            instructions.push_str(&content);
+            instructions.push('\n');
+        }
+
+        let agents_instructions = project.join(".agents").join("instructions.md");
+        if agents_instructions.is_file()
+            && let Ok(content) = std::fs::read_to_string(&agents_instructions)
+        {
+            info!("Loaded instructions from .agents/instructions.md");
+            instructions.push_str(&content);
+            instructions.push('\n');
+        }
+
+        for subdir in &["rules", "context", "workflows"] {
+            let dir = project.join(".ai").join(subdir);
+            if dir.is_dir()
+                && let Ok(entries) = std::fs::read_dir(&dir)
+            {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.extension().is_some_and(|e| e == "md")
+                        && let Ok(content) = std::fs::read_to_string(&path)
+                    {
+                        info!("Loaded instructions from {:?}", path);
+                        instructions.push_str(&content);
+                        instructions.push('\n');
+                    }
+                }
+            }
+        }
+
+        instructions
+    }
+
     /// Consumes the builder and produces an [`Agent`].
     ///
     /// # Errors
     ///
     /// Returns a `BimoError::Config` if no provider or user prompt was set.
     pub fn build(self) -> Result<Agent> {
+        let instructions = self.load_instructions();
+
         let provider = self
             .provider
             .ok_or_else(|| crate::error::BimoError::Config("No provider configured".to_string()))?;
 
         let model = self.model.unwrap_or_else(|| provider.id.clone());
-
-        let project_dir_str = self.project_dir.as_ref().and_then(|p| p.to_str());
-
-        let instructions = load_instructions(project_dir_str);
 
         let tools_desc = tools::describe_tools();
 
