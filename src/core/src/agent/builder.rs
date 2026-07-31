@@ -198,6 +198,11 @@ impl AgentBuilder {
             .as_ref()
             .map(|s| s.disabled_tools().clone())
             .unwrap_or_default();
+        let disabled_skills = self
+            .session
+            .as_ref()
+            .map(|s| s.disabled_skills().clone())
+            .unwrap_or_default();
 
         let provider = self
             .provider
@@ -208,7 +213,10 @@ impl AgentBuilder {
         let tools_desc = tools::describe_tools(&disabled_tools);
 
         let skill_dirs = skill::default_skill_dirs(self.project_dir.as_deref());
-        let skills = skill::load_skills(&skill_dirs);
+        let mut skills = skill::load_skills(&skill_dirs);
+        for id in &disabled_skills {
+            skill::disable_skill(&mut skills, id);
+        }
         let skills_rendered = skill::render_skills(&skills);
 
         let system_prompt = PromptEngine::render_system(&HashMap::from([

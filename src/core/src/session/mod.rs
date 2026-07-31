@@ -29,6 +29,9 @@ pub struct Session {
     /// Names of tools disabled for this session.
     #[serde(default)]
     pub disabled_tools: BTreeSet<String>,
+    /// Ids of skills disabled for this session.
+    #[serde(default)]
+    pub disabled_skills: BTreeSet<String>,
     pub metadata: serde_json::Value,
 }
 
@@ -42,6 +45,7 @@ impl Session {
             messages: Vec::new(),
             todo_list: TodoList::new(),
             disabled_tools: BTreeSet::new(),
+            disabled_skills: BTreeSet::new(),
             metadata: serde_json::json!({}),
         }
     }
@@ -106,6 +110,31 @@ impl Session {
         }
         self.updated_at = Utc::now();
         Ok(self.disabled_tools.remove(name))
+    }
+
+    /// Returns the ids of skills disabled for this session.
+    pub fn disabled_skills(&self) -> &BTreeSet<String> {
+        &self.disabled_skills
+    }
+
+    /// Returns `true` if the skill with the given `id` is not disabled in this session.
+    pub fn is_skill_enabled(&self, id: &str) -> bool {
+        !self.disabled_skills.contains(id)
+    }
+
+    /// Disables a skill for this session, returning `true` if it was newly disabled.
+    ///
+    /// The id is recorded regardless of whether the skill is currently loaded
+    /// (skills are loaded per project at build time).
+    pub fn disable_skill(&mut self, id: &str) -> bool {
+        self.updated_at = Utc::now();
+        self.disabled_skills.insert(id.to_string())
+    }
+
+    /// Enables a skill for this session, returning `true` if it was newly enabled.
+    pub fn enable_skill(&mut self, id: &str) -> bool {
+        self.updated_at = Utc::now();
+        self.disabled_skills.remove(id)
     }
 
     /// Returns the directory where session files are stored.
