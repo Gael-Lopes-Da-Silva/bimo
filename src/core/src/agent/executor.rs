@@ -27,8 +27,8 @@ use crate::tools;
 pub enum SteerCommand {
     /// Execute the proposed tool call(s) and continue the run.
     Continue,
-    /// Inject guidance as a user message and re-plan; the pending tool
-    /// call(s) are cancelled.
+    /// Let the pending tool call(s) run to completion, then inject the
+    /// guidance as a user message before the next step.
     Inject(String),
 }
 
@@ -49,8 +49,6 @@ pub enum AgentEvent {
         tool_name: String,
         result: std::result::Result<String, String>,
     },
-    /// A proposed tool call was cancelled by a steering instruction.
-    ToolCallCancelled { tool_name: String },
     /// A steering instruction was injected by the user mid-run.
     Steering(String),
     /// An error occurred.
@@ -153,8 +151,8 @@ impl Agent {
     ///
     /// The run pauses before each proposed tool call; the caller decides when
     /// to send [`SteerCommand::Continue`] (execute the tool and proceed) or
-    /// [`SteerCommand::Inject`] (discard the tool call, inject guidance, and
-    /// re-plan). Dropping the sender resumes execution.
+    /// [`SteerCommand::Inject`] (let the tool run, then inject guidance before
+    /// the next step). Dropping the sender resumes execution.
     ///
     /// The agent is consumed (may only be run once).
     pub async fn run_stream_steerable(
@@ -519,35 +517,14 @@ impl AgentRunner {
             }
 
             // Pause point: wait for a steering decision before executing tools.
-            if let Some(rx) = steer_rx.as_mut() {
-                let mut decision = None;
-                if let Some(cmd) = rx.recv().await
-                    && let SteerCommand::Inject(text) = cmd
-                {
-                    decision = Some(text);
-                }
-                if let Some(text) = decision {
-                    for (msg, _) in &tool_calls {
-                        if let LanguageModelResponseContentType::ToolCall(info) = &msg.content {
-                            self.emit_event(
-                                AgentEvent::ToolCallCancelled {
-                                    tool_name: info.tool.name.clone(),
-                                },
-                                &tx,
-                            );
-                        }
-                    }
-                    for msg in &assistant_dones {
-                        if !matches!(msg.content, LanguageModelResponseContentType::ToolCall(_)) {
-                            working.push(Message::Assistant(msg.clone()));
-                        }
-                    }
-                    working.push(Message::User(UserMessage::new(text.clone())));
-                    session.add_message("user".to_string(), text.clone());
-                    self.persist_session(&session);
-                    self.emit_event(AgentEvent::Steering(text), &tx);
-                    continue;
-                }
+            // Injecting guidance never cancels a tool call; the guidance is
+            // applied at the next safe point, after the tool results.
+            let mut pending_steer: Option<String> = None;
+            if let Some(rx) = steer_rx.as_mut()
+                && let Some(cmd) = rx.recv().await
+                && let SteerCommand::Inject(text) = cmd
+            {
+                pending_steer = Some(text);
             }
 
             for msg in &assistant_dones {
@@ -596,6 +573,14 @@ impl AgentRunner {
                     },
                     &tx,
                 );
+            }
+
+            // Next safe point: inject queued steering after the tool results.
+            if let Some(text) = pending_steer {
+                working.push(Message::User(UserMessage::new(text.clone())));
+                session.add_message("user".to_string(), text.clone());
+                self.persist_session(&session);
+                self.emit_event(AgentEvent::Steering(text), &tx);
             }
         }
 
