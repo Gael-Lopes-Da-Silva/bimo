@@ -4,4 +4,4 @@ mod builder;
 mod executor;
 
 pub use builder::AgentBuilder;
-pub use executor::{Agent, AgentEvent};
+pub use executor::{Agent, AgentEvent, SteerCommand};

@@ -13,7 +13,7 @@ pub mod session;
 pub mod skill;
 pub mod tools;
 
-pub use agent::{Agent, AgentBuilder, AgentEvent};
+pub use agent::{Agent, AgentBuilder, AgentEvent, SteerCommand};
 pub use config::{ApiFormat, Provider, ProviderType, ProvidersFile, Settings};
 pub use error::{BimoError, Result};
 pub use models::{ModelEntry, ModelRegistry};
