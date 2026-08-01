@@ -1,7 +1,16 @@
+use std::sync::{Arc, Mutex, OnceLock};
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::sync::{Arc, Mutex, OnceLock};
 use tracing::info;
+
+use aisdk::core::tools::Tool;
+use aisdk::macros::tool;
+
+static TODO_LIST: OnceLock<SharedTodoList> = OnceLock::new();
+
+/// A thread-safe shared reference to a [`TodoList`].
+pub type SharedTodoList = Arc<Mutex<TodoList>>;
 
 /// The status of a todo item.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -165,17 +174,6 @@ impl Default for TodoList {
     }
 }
 
-/// A thread-safe shared reference to a [`TodoList`].
-pub type SharedTodoList = Arc<Mutex<TodoList>>;
-
-/// Creates a new empty shared todo list.
-pub fn new_shared_todolist() -> SharedTodoList {
-    Arc::new(Mutex::new(TodoList::new()))
-}
-
-use aisdk::core::tools::Tool;
-use aisdk::macros::tool;
-
 /// Manages a task list — supports `add`, `update`, `remove`, and `list` actions.
 #[tool(
     name = "manage_todo",
@@ -188,7 +186,7 @@ pub fn manage_todo(
     id: Option<String>,
     status: Option<String>,
 ) -> Tool {
-    let todo_list = TODO_LIST.get_or_init(new_shared_todolist);
+    let todo_list = TODO_LIST.get_or_init(new_shared_todo_list);
 
     let mut list = todo_list.lock().map_err(|e| format!("Lock error: {}", e))?;
 
@@ -236,7 +234,10 @@ pub fn manage_todo(
     }
 }
 
-static TODO_LIST: OnceLock<SharedTodoList> = OnceLock::new();
+/// Creates a new empty shared todo list.
+pub fn new_shared_todo_list() -> SharedTodoList {
+    Arc::new(Mutex::new(TodoList::new()))
+}
 
 /// Initializes the global todo list singleton.
 ///

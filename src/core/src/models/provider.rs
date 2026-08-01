@@ -17,7 +17,7 @@ type AnthropicModel = Anthropic<DynamicModel>;
 type GoogleModel = Google<DynamicModel>;
 
 /// Erased model type — dispatches to the concrete provider SDK at build time.
-pub(crate) enum ModelProvider {
+pub enum ModelProvider {
     OpenAI(Box<OpenAIModel>),
     Anthropic(Box<AnthropicModel>),
     Google(Box<GoogleModel>),
@@ -25,7 +25,7 @@ pub(crate) enum ModelProvider {
 
 impl ModelProvider {
     /// Builds the appropriate model variant from config fields.
-    pub(crate) async fn build(
+    pub async fn build(
         api_format: &ApiFormat,
         base_url: &str,
         model_name: &str,

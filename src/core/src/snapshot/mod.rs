@@ -28,20 +28,6 @@ use crate::error::{BimoError, Result};
 /// prune them between capture and restore.
 const SNAPSHOT_REF_PREFIX: &str = "refs/bimo/snapshots/";
 
-/// A point-in-time capture of a project's filesystem, backed by a commit in
-/// the project's own git repository.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Snapshot {
-    /// Unique snapshot id; also used as the git ref suffix.
-    pub id: String,
-    /// Absolute path to the git repository root that was captured.
-    pub repo_root: PathBuf,
-    /// Commit object holding the captured tree.
-    pub commit: String,
-    /// When the snapshot was captured.
-    pub created_at: DateTime<Utc>,
-}
-
 /// Metadata for a single agent run, linking its triggering user message to the
 /// filesystem snapshots captured around it so the UI can undo/redo file
 /// changes per message.
@@ -66,6 +52,20 @@ pub struct SnapshotRecord {
     pub created_at: DateTime<Utc>,
 }
 
+/// A point-in-time capture of a project's filesystem, backed by a commit in
+/// the project's own git repository.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Snapshot {
+    /// Unique snapshot id; also used as the git ref suffix.
+    pub id: String,
+    /// Absolute path to the git repository root that was captured.
+    pub repo_root: PathBuf,
+    /// Commit object holding the captured tree.
+    pub commit: String,
+    /// When the snapshot was captured.
+    pub created_at: DateTime<Utc>,
+}
+
 impl Snapshot {
     /// Captures the current state of `project_dir`.
     ///
@@ -74,12 +74,15 @@ impl Snapshot {
     /// Returns an error when `project_dir` is not inside a git repository,
     /// git is unavailable, or the repository cannot be read.
     pub fn capture(project_dir: &Path) -> Result<Self> {
-        let repo_root = PathBuf::from(git_ok(project_dir, &["rev-parse", "--show-toplevel"])?);
-        let tree = capture_tree(&repo_root)?;
-        let commit = commit_tree(&repo_root, &tree)?;
+        let repo_root = PathBuf::from(Snapshot::git_ok(
+            project_dir,
+            &["rev-parse", "--show-toplevel"],
+        )?);
+        let tree = Snapshot::capture_tree(&repo_root)?;
+        let commit = Snapshot::commit_tree(&repo_root, &tree)?;
         let id = Uuid::new_v4().to_string();
         // Pin the commit so background `git gc` cannot prune it.
-        git_ok(
+        Snapshot::git_ok(
             &repo_root,
             &["update-ref", &format!("{SNAPSHOT_REF_PREFIX}{id}"), &commit],
         )?;
@@ -101,9 +104,9 @@ impl Snapshot {
     /// operations fail.
     pub fn restore(&self) -> Result<()> {
         // Fail fast if the snapshot commit was pruned.
-        git_ok(&self.repo_root, &["cat-file", "-e", &self.commit])?;
+        Snapshot::git_ok(&self.repo_root, &["cat-file", "-e", &self.commit])?;
 
-        git_ok(
+        Snapshot::git_ok(
             &self.repo_root,
             &["restore", "--source", &self.commit, "--worktree", "--", "."],
         )?;
@@ -123,7 +126,7 @@ impl Snapshot {
     /// it was pruned) or git operations fail.
     pub fn duplicate(&self) -> Result<Self> {
         let id = Uuid::new_v4().to_string();
-        git_ok(
+        Snapshot::git_ok(
             &self.repo_root,
             &[
                 "update-ref",
@@ -172,7 +175,7 @@ impl Snapshot {
     /// Removes this snapshot: deletes its metadata file and drops the git ref
     /// that pinned the commit (best-effort).
     pub fn delete(&self) -> Result<()> {
-        let _ = git_output(
+        let _ = Snapshot::git_output(
             &self.repo_root,
             &[
                 "update-ref",
@@ -189,12 +192,12 @@ impl Snapshot {
 
     /// The set of files (repo-root-relative paths) captured in the snapshot.
     fn file_set(&self) -> Result<HashSet<PathBuf>> {
-        let out = git_output(
+        let out = Snapshot::git_output(
             &self.repo_root,
             &["ls-tree", "-r", "--name-only", "-z", &self.commit],
         )?;
         if !out.status.success() {
-            return Err(git_failed(&["ls-tree"], &out));
+            return Err(Snapshot::git_failed(&["ls-tree"], &out));
         }
         let mut files = HashSet::new();
         for path in out.stdout.split(|b| *b == 0) {
@@ -212,7 +215,7 @@ impl Snapshot {
     fn remove_extra_files(&self, snapshot_files: &HashSet<PathBuf>) -> Result<()> {
         let mut candidates: Vec<PathBuf> = Vec::new();
         let mut dirs: Vec<PathBuf> = Vec::new();
-        collect_extra_files(
+        Snapshot::collect_extra_files(
             &self.repo_root,
             &self.repo_root,
             snapshot_files,
@@ -290,6 +293,131 @@ impl Snapshot {
         }
         Ok(ignored)
     }
+
+    /// Captures the working tree of `repo_root` into a git tree object.
+    ///
+    /// A temporary index is used so the user's real index is left untouched. The
+    /// index is seeded from `HEAD` so tracked-file deletions are captured too;
+    /// fresh repositories without a `HEAD` start from an empty index.
+    fn capture_tree(repo_root: &Path) -> Result<String> {
+        let index_path = std::env::temp_dir().join(format!("bimo-index-{}.idx", Uuid::new_v4()));
+        let index = index_path
+            .to_str()
+            .ok_or_else(|| BimoError::Other("temporary index path is not valid UTF-8".into()))?;
+
+        let read = Snapshot::git_output(repo_root, &["read-tree", "HEAD"]);
+        if !matches!(read, Ok(out) if out.status.success()) {
+            // No HEAD yet — start from an empty index.
+            let _ = std::fs::remove_file(&index_path);
+        }
+
+        let add = Command::new("git")
+            .env("GIT_INDEX_FILE", index)
+            .current_dir(repo_root)
+            .args(["add", "-A"])
+            .output()
+            .map_err(|e| BimoError::Other(format!("failed to run `git add -A`: {e}")))?;
+        if !add.status.success() {
+            let _ = std::fs::remove_file(&index_path);
+            return Err(Snapshot::git_failed(&["add", "-A"], &add));
+        }
+
+        let write = Command::new("git")
+            .env("GIT_INDEX_FILE", index)
+            .current_dir(repo_root)
+            .args(["write-tree"])
+            .output()
+            .map_err(|e| BimoError::Other(format!("failed to run `git write-tree`: {e}")))?;
+        let _ = std::fs::remove_file(&index_path);
+
+        if !write.status.success() {
+            return Err(Snapshot::git_failed(&["write-tree"], &write));
+        }
+        Ok(String::from_utf8_lossy(&write.stdout).trim().to_string())
+    }
+
+    /// Turns a captured tree into a commit object so it can be pinned by a ref.
+    fn commit_tree(repo_root: &Path, tree: &str) -> Result<String> {
+        let out = Snapshot::git_output_env(
+            repo_root,
+            &["commit-tree", tree, "-m", "bimo snapshot"],
+            &[
+                ("GIT_AUTHOR_NAME", "bimo"),
+                ("GIT_AUTHOR_EMAIL", "bimo@localhost"),
+                ("GIT_COMMITTER_NAME", "bimo"),
+                ("GIT_COMMITTER_EMAIL", "bimo@localhost"),
+            ],
+        )?;
+        if !out.status.success() {
+            return Err(Snapshot::git_failed(&["commit-tree"], &out));
+        }
+        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    }
+
+    /// Recursively collects working-tree files not present in the snapshot and
+    /// every directory under `dir` (for empty-directory cleanup). Nested git
+    /// repositories / submodules are not descended into.
+    fn collect_extra_files(
+        repo_root: &Path,
+        dir: &Path,
+        snapshot_files: &HashSet<PathBuf>,
+        candidates: &mut Vec<PathBuf>,
+        dirs: &mut Vec<PathBuf>,
+    ) -> Result<()> {
+        let entries = std::fs::read_dir(dir)?;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if entry.file_name() == ".git" {
+                continue;
+            }
+
+            if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                if path.join(".git").exists() {
+                    continue;
+                }
+                Snapshot::collect_extra_files(repo_root, &path, snapshot_files, candidates, dirs)?;
+                dirs.push(path);
+            } else {
+                let rel = path.strip_prefix(repo_root).map_err(|e| {
+                    BimoError::Other(format!("path {path:?} is outside {repo_root:?}: {e}"))
+                })?;
+                if !snapshot_files.contains(rel) {
+                    candidates.push(rel.to_path_buf());
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn git_ok(repo_root: &Path, args: &[&str]) -> Result<String> {
+        let out = Snapshot::git_output(repo_root, args)?;
+        if !out.status.success() {
+            return Err(Snapshot::git_failed(args, &out));
+        }
+        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    }
+
+    fn git_output(repo_root: &Path, args: &[&str]) -> Result<Output> {
+        Snapshot::git_output_env(repo_root, args, &[])
+    }
+
+    fn git_output_env(repo_root: &Path, args: &[&str], env: &[(&str, &str)]) -> Result<Output> {
+        let mut cmd = Command::new("git");
+        cmd.current_dir(repo_root).args(args);
+        for (key, value) in env {
+            cmd.env(key, value);
+        }
+        cmd.output()
+            .map_err(|e| BimoError::Other(format!("failed to run `git {}`: {e}", args.join(" "))))
+    }
+
+    fn git_failed(args: &[&str], out: &Output) -> BimoError {
+        BimoError::Other(format!(
+            "`git {}` failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&out.stderr).trim()
+        ))
+    }
 }
 
 /// Captures and persists a filesystem snapshot of `project_dir`.
@@ -297,129 +425,4 @@ pub fn capture_snapshot(project_dir: &Path) -> Result<Snapshot> {
     let snapshot = Snapshot::capture(project_dir)?;
     snapshot.save()?;
     Ok(snapshot)
-}
-
-/// Captures the working tree of `repo_root` into a git tree object.
-///
-/// A temporary index is used so the user's real index is left untouched. The
-/// index is seeded from `HEAD` so tracked-file deletions are captured too;
-/// fresh repositories without a `HEAD` start from an empty index.
-fn capture_tree(repo_root: &Path) -> Result<String> {
-    let index_path = std::env::temp_dir().join(format!("bimo-index-{}.idx", Uuid::new_v4()));
-    let index = index_path
-        .to_str()
-        .ok_or_else(|| BimoError::Other("temporary index path is not valid UTF-8".into()))?;
-
-    let read = git_output(repo_root, &["read-tree", "HEAD"]);
-    if !matches!(read, Ok(out) if out.status.success()) {
-        // No HEAD yet — start from an empty index.
-        let _ = std::fs::remove_file(&index_path);
-    }
-
-    let add = Command::new("git")
-        .env("GIT_INDEX_FILE", index)
-        .current_dir(repo_root)
-        .args(["add", "-A"])
-        .output()
-        .map_err(|e| BimoError::Other(format!("failed to run `git add -A`: {e}")))?;
-    if !add.status.success() {
-        let _ = std::fs::remove_file(&index_path);
-        return Err(git_failed(&["add", "-A"], &add));
-    }
-
-    let write = Command::new("git")
-        .env("GIT_INDEX_FILE", index)
-        .current_dir(repo_root)
-        .args(["write-tree"])
-        .output()
-        .map_err(|e| BimoError::Other(format!("failed to run `git write-tree`: {e}")))?;
-    let _ = std::fs::remove_file(&index_path);
-
-    if !write.status.success() {
-        return Err(git_failed(&["write-tree"], &write));
-    }
-    Ok(String::from_utf8_lossy(&write.stdout).trim().to_string())
-}
-
-/// Turns a captured tree into a commit object so it can be pinned by a ref.
-fn commit_tree(repo_root: &Path, tree: &str) -> Result<String> {
-    let out = git_output_env(
-        repo_root,
-        &["commit-tree", tree, "-m", "bimo snapshot"],
-        &[
-            ("GIT_AUTHOR_NAME", "bimo"),
-            ("GIT_AUTHOR_EMAIL", "bimo@localhost"),
-            ("GIT_COMMITTER_NAME", "bimo"),
-            ("GIT_COMMITTER_EMAIL", "bimo@localhost"),
-        ],
-    )?;
-    if !out.status.success() {
-        return Err(git_failed(&["commit-tree"], &out));
-    }
-    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
-}
-
-/// Recursively collects working-tree files not present in the snapshot and
-/// every directory under `dir` (for empty-directory cleanup). Nested git
-/// repositories / submodules are not descended into.
-fn collect_extra_files(
-    repo_root: &Path,
-    dir: &Path,
-    snapshot_files: &HashSet<PathBuf>,
-    candidates: &mut Vec<PathBuf>,
-    dirs: &mut Vec<PathBuf>,
-) -> Result<()> {
-    let entries = std::fs::read_dir(dir)?;
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if entry.file_name() == ".git" {
-            continue;
-        }
-
-        if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-            if path.join(".git").exists() {
-                continue;
-            }
-            collect_extra_files(repo_root, &path, snapshot_files, candidates, dirs)?;
-            dirs.push(path);
-        } else {
-            let rel = path.strip_prefix(repo_root).map_err(|e| {
-                BimoError::Other(format!("path {path:?} is outside {repo_root:?}: {e}"))
-            })?;
-            if !snapshot_files.contains(rel) {
-                candidates.push(rel.to_path_buf());
-            }
-        }
-    }
-    Ok(())
-}
-
-fn git_ok(repo_root: &Path, args: &[&str]) -> Result<String> {
-    let out = git_output(repo_root, args)?;
-    if !out.status.success() {
-        return Err(git_failed(args, &out));
-    }
-    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
-}
-
-fn git_output(repo_root: &Path, args: &[&str]) -> Result<Output> {
-    git_output_env(repo_root, args, &[])
-}
-
-fn git_output_env(repo_root: &Path, args: &[&str], env: &[(&str, &str)]) -> Result<Output> {
-    let mut cmd = Command::new("git");
-    cmd.current_dir(repo_root).args(args);
-    for (key, value) in env {
-        cmd.env(key, value);
-    }
-    cmd.output()
-        .map_err(|e| BimoError::Other(format!("failed to run `git {}`: {e}", args.join(" "))))
-}
-
-fn git_failed(args: &[&str], out: &Output) -> BimoError {
-    BimoError::Other(format!(
-        "`git {}` failed: {}",
-        args.join(" "),
-        String::from_utf8_lossy(&out.stderr).trim()
-    ))
 }

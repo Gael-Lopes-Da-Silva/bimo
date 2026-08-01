@@ -39,6 +39,40 @@ fn default_enabled() -> bool {
     true
 }
 
+/// Parses YAML frontmatter (delimited by `---`) and the body from markdown.
+///
+/// Returns `(frontmatter_yaml, body)` or `None` when no frontmatter is present.
+fn parse_frontmatter(content: &str) -> Option<(String, String)> {
+    let trimmed = content.trim_start();
+    if !trimmed.starts_with("---") {
+        return None;
+    }
+    let after_first = trimmed.strip_prefix("---")?;
+    let rest = after_first.trim_start();
+    // Find the closing delimiter on its own line
+    let mut search_start = 0;
+    let mut end_pos = None;
+    while let Some(pos) = rest[search_start..].find("\n---") {
+        let absolute_pos = search_start + pos;
+        // Check that the closing delimiter is followed by newline or end of string
+        let after_delim = absolute_pos + 4; // skip \n---
+        if after_delim == rest.len() || rest[after_delim..].starts_with('\n') {
+            end_pos = Some(absolute_pos);
+            break;
+        }
+        search_start = absolute_pos + 1;
+    }
+    let end = end_pos?;
+    let frontmatter = rest[..end].trim().to_string();
+    let body_start = end + 4; // skip \n---
+    let body = if body_start < rest.len() {
+        rest[body_start..].trim_start().to_string()
+    } else {
+        String::new()
+    };
+    Some((frontmatter, body))
+}
+
 /// Scans the given base directories for skill directories containing `SKILL.md`.
 ///
 /// Later directories take precedence (earlier skills with the same `id` are
@@ -110,40 +144,6 @@ pub fn load_skills(base_dirs: &[PathBuf]) -> Vec<Skill> {
     }
 
     skills
-}
-
-/// Parses YAML frontmatter (delimited by `---`) and the body from markdown.
-///
-/// Returns `(frontmatter_yaml, body)` or `None` when no frontmatter is present.
-fn parse_frontmatter(content: &str) -> Option<(String, String)> {
-    let trimmed = content.trim_start();
-    if !trimmed.starts_with("---") {
-        return None;
-    }
-    let after_first = trimmed.strip_prefix("---")?;
-    let rest = after_first.trim_start();
-    // Find the closing delimiter on its own line
-    let mut search_start = 0;
-    let mut end_pos = None;
-    while let Some(pos) = rest[search_start..].find("\n---") {
-        let absolute_pos = search_start + pos;
-        // Check that the closing delimiter is followed by newline or end of string
-        let after_delim = absolute_pos + 4; // skip \n---
-        if after_delim == rest.len() || rest[after_delim..].starts_with('\n') {
-            end_pos = Some(absolute_pos);
-            break;
-        }
-        search_start = absolute_pos + 1;
-    }
-    let end = end_pos?;
-    let frontmatter = rest[..end].trim().to_string();
-    let body_start = end + 4; // skip \n---
-    let body = if body_start < rest.len() {
-        rest[body_start..].trim_start().to_string()
-    } else {
-        String::new()
-    };
-    Some((frontmatter, body))
 }
 
 /// Formats enabled skills as compact bullet entries for prompt injection.

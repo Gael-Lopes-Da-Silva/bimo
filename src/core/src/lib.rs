@@ -14,7 +14,6 @@ pub mod skill;
 pub mod snapshot;
 pub mod tools;
 
-pub use agent::parse_reasoning_effort;
 pub use agent::{Agent, AgentBuilder, AgentEvent, SteerCommand};
 pub use aisdk::core::language_model::ReasoningEffort;
 pub use config::{ApiFormat, Provider, ProviderType, ProvidersFile, Settings};

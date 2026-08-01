@@ -34,68 +34,7 @@ impl SessionManager {
         Ok(manager)
     }
 
-    async fn load_existing(&self) -> crate::Result<()> {
-        let dir = Session::sessions_dir();
-        if !dir.exists() {
-            return Ok(());
-        }
-
-        let max_load = self.settings.max_sessions;
-        let mut reader = tokio::fs::read_dir(&dir).await?;
-        let mut sessions = self.sessions.write().await;
-        let mut loaded = 0;
-
-        while let Some(entry) = reader.next_entry().await? {
-            if loaded >= max_load {
-                warn!(
-                    "Reached maximum session limit ({}), stopping load",
-                    max_load
-                );
-                break;
-            }
-
-            let path = entry.path();
-            if path.extension().is_some_and(|e| e == "json") {
-                match tokio::fs::read_to_string(&path).await {
-                    Ok(content) => match serde_json::from_str::<Session>(&content) {
-                        Ok(session) => {
-                            sessions.insert(session.id.clone(), session);
-                            loaded += 1;
-                        }
-                        Err(e) => {
-                            warn!("Failed to parse session file {:?}: {}", path, e);
-                        }
-                    },
-                    Err(e) => {
-                        warn!("Failed to read session file {:?}: {}", path, e);
-                    }
-                }
-            }
-        }
-
-        info!("Loaded {} sessions", sessions.len());
-        Ok(())
-    }
-
-    fn start_cleanup_task(&self) {
-        let sessions = self.sessions.clone();
-        let ttl = self.settings.session_ttl_hours;
-        let max_sessions = self.settings.max_sessions;
-        let interval_minutes = self.settings.cleanup_interval_minutes;
-
-        let handle = tokio::spawn(async move {
-            let mut ticker = interval(Duration::from_secs(interval_minutes.saturating_mul(60)));
-            loop {
-                ticker.tick().await;
-                Self::run_cleanup(&sessions, ttl, max_sessions).await;
-            }
-        });
-
-        let mut cleanup_handle = self.cleanup_handle.blocking_lock();
-        *cleanup_handle = Some(handle);
-    }
-
-    async fn run_cleanup(
+    pub async fn run_cleanup(
         sessions: &Arc<RwLock<HashMap<String, Session>>>,
         ttl_hours: u64,
         max_sessions: usize,
@@ -154,6 +93,13 @@ impl SessionManager {
             }
             info!("Removed excess session {}", id);
         }
+    }
+
+    /// Runs the cleanup logic immediately (used for testing).
+    pub async fn run_cleanup_now(&self) {
+        let ttl = self.settings.session_ttl_hours;
+        let max = self.settings.max_sessions;
+        Self::run_cleanup(&self.sessions, ttl, max).await;
     }
 
     /// Creates a new session, persists it, and returns it.
@@ -216,11 +162,65 @@ impl SessionManager {
         sessions
     }
 
-    /// Runs the cleanup logic immediately (used for testing).
-    pub async fn run_cleanup_now(&self) {
+    async fn load_existing(&self) -> crate::Result<()> {
+        let dir = Session::sessions_dir();
+        if !dir.exists() {
+            return Ok(());
+        }
+
+        let max_load = self.settings.max_sessions;
+        let mut reader = tokio::fs::read_dir(&dir).await?;
+        let mut sessions = self.sessions.write().await;
+        let mut loaded = 0;
+
+        while let Some(entry) = reader.next_entry().await? {
+            if loaded >= max_load {
+                warn!(
+                    "Reached maximum session limit ({}), stopping load",
+                    max_load
+                );
+                break;
+            }
+
+            let path = entry.path();
+            if path.extension().is_some_and(|e| e == "json") {
+                match tokio::fs::read_to_string(&path).await {
+                    Ok(content) => match serde_json::from_str::<Session>(&content) {
+                        Ok(session) => {
+                            sessions.insert(session.id.clone(), session);
+                            loaded += 1;
+                        }
+                        Err(e) => {
+                            warn!("Failed to parse session file {:?}: {}", path, e);
+                        }
+                    },
+                    Err(e) => {
+                        warn!("Failed to read session file {:?}: {}", path, e);
+                    }
+                }
+            }
+        }
+
+        info!("Loaded {} sessions", sessions.len());
+        Ok(())
+    }
+
+    fn start_cleanup_task(&self) {
+        let sessions = self.sessions.clone();
         let ttl = self.settings.session_ttl_hours;
-        let max = self.settings.max_sessions;
-        Self::run_cleanup(&self.sessions, ttl, max).await;
+        let max_sessions = self.settings.max_sessions;
+        let interval_minutes = self.settings.cleanup_interval_minutes;
+
+        let handle = tokio::spawn(async move {
+            let mut ticker = interval(Duration::from_secs(interval_minutes.saturating_mul(60)));
+            loop {
+                ticker.tick().await;
+                Self::run_cleanup(&sessions, ttl, max_sessions).await;
+            }
+        });
+
+        let mut cleanup_handle = self.cleanup_handle.blocking_lock();
+        *cleanup_handle = Some(handle);
     }
 }
 

@@ -75,57 +75,6 @@ impl CloudProviderRegistry {
         Ok(())
     }
 
-    async fn fetch_remote(&self) -> Result<ProviderMap> {
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(10))
-            .build()
-            .map_err(|e| BimoError::Msg(format!("Failed to create HTTP client: {e}")))?;
-
-        let resp = client
-            .get(MODELS_DEV_URL)
-            .send()
-            .await
-            .map_err(|e| BimoError::Msg(format!("HTTP request failed: {e}")))?;
-
-        let bytes = resp
-            .bytes()
-            .await
-            .map_err(|e| BimoError::Msg(format!("Failed to read response body: {e}")))?;
-
-        let providers: ProviderMap = serde_json::from_slice(&bytes)
-            .map_err(|e| BimoError::Msg(format!("JSON parse failed: {e}")))?;
-
-        if let Err(e) = std::fs::write(&self.cache_path, &bytes) {
-            warn!("Failed to write models cache: {e}");
-        }
-
-        Ok(providers)
-    }
-
-    async fn load_cache(&self) -> Result<()> {
-        if !self.cache_path.exists() {
-            return Err(BimoError::Other(
-                "No models.dev cache available; run refresh()".to_string(),
-            ));
-        }
-        let content = tokio::fs::read_to_string(&self.cache_path).await?;
-        let providers: ProviderMap = serde_json::from_str(&content)?;
-        let mut map = self.providers.write().await;
-        *map = providers;
-        info!("Loaded {} providers from cache", map.len());
-        Ok(())
-    }
-
-    async fn save_cache(&self) -> Result<()> {
-        if let Some(parent) = self.cache_path.parent() {
-            tokio::fs::create_dir_all(parent).await?;
-        }
-        let map = self.providers.read().await;
-        let content = serde_json::to_string_pretty(&*map)?;
-        tokio::fs::write(&self.cache_path, &content).await?;
-        Ok(())
-    }
-
     /// Returns supported providers from the registry as [`Provider`] instances.
     ///
     /// Entries with an unknown [`ApiFormat`](crate::config::ApiFormat) are
@@ -181,11 +130,6 @@ impl CloudProviderRegistry {
         map.get(provider_id).map(|p| p.api_format())
     }
 
-    /// Returns a reference to the inner provider map for sharing with `ModelRegistry`.
-    pub fn providers_ref(&self) -> &Arc<RwLock<ProviderMap>> {
-        &self.providers
-    }
-
     /// Number of providers currently in the registry.
     pub async fn provider_count(&self) -> usize {
         let map = self.providers.read().await;
@@ -227,6 +171,62 @@ impl CloudProviderRegistry {
                 provider.base_url = url;
             }
         }
+    }
+
+    /// Returns a reference to the inner provider map for sharing with `ModelRegistry`.
+    pub fn providers_ref(&self) -> &Arc<RwLock<ProviderMap>> {
+        &self.providers
+    }
+
+    async fn fetch_remote(&self) -> Result<ProviderMap> {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .build()
+            .map_err(|e| BimoError::Msg(format!("Failed to create HTTP client: {e}")))?;
+
+        let resp = client
+            .get(MODELS_DEV_URL)
+            .send()
+            .await
+            .map_err(|e| BimoError::Msg(format!("HTTP request failed: {e}")))?;
+
+        let bytes = resp
+            .bytes()
+            .await
+            .map_err(|e| BimoError::Msg(format!("Failed to read response body: {e}")))?;
+
+        let providers: ProviderMap = serde_json::from_slice(&bytes)
+            .map_err(|e| BimoError::Msg(format!("JSON parse failed: {e}")))?;
+
+        if let Err(e) = std::fs::write(&self.cache_path, &bytes) {
+            warn!("Failed to write models cache: {e}");
+        }
+
+        Ok(providers)
+    }
+
+    async fn load_cache(&self) -> Result<()> {
+        if !self.cache_path.exists() {
+            return Err(BimoError::Other(
+                "No models.dev cache available; run refresh()".to_string(),
+            ));
+        }
+        let content = tokio::fs::read_to_string(&self.cache_path).await?;
+        let providers: ProviderMap = serde_json::from_str(&content)?;
+        let mut map = self.providers.write().await;
+        *map = providers;
+        info!("Loaded {} providers from cache", map.len());
+        Ok(())
+    }
+
+    async fn save_cache(&self) -> Result<()> {
+        if let Some(parent) = self.cache_path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        let map = self.providers.read().await;
+        let content = serde_json::to_string_pretty(&*map)?;
+        tokio::fs::write(&self.cache_path, &content).await?;
+        Ok(())
     }
 }
 

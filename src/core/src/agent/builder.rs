@@ -7,7 +7,7 @@ use tracing::info;
 use aisdk::core::language_model::ReasoningEffort;
 
 use crate::agent::Agent;
-use crate::agent::executor::{AgentRunner, parse_reasoning_effort};
+use crate::agent::AgentRunner;
 use crate::config::Provider;
 use crate::config::Settings;
 use crate::error::Result;
@@ -51,6 +51,98 @@ impl AgentBuilder {
             retry_attempts: None,
             retry_timeout_secs: None,
         }
+    }
+
+    /// Consumes the builder and produces an [`Agent`].
+    ///
+    /// # Errors
+    ///
+    /// Returns a `BimoError::Config` if no provider or user prompt was set.
+    pub fn build(self) -> Result<Agent> {
+        let instructions = self.load_instructions();
+
+        let disabled_tools = self
+            .session
+            .as_ref()
+            .map(|s| s.disabled_tools().clone())
+            .unwrap_or_default();
+        let disabled_skills = self
+            .session
+            .as_ref()
+            .map(|s| s.disabled_skills().clone())
+            .unwrap_or_default();
+
+        let provider = self
+            .provider
+            .ok_or_else(|| crate::error::BimoError::Config("No provider configured".to_string()))?;
+
+        let model = self.model.unwrap_or_else(|| provider.id.clone());
+
+        let reasoning_effort = self.reasoning_effort.or_else(|| {
+            self.session
+                .as_ref()
+                .and_then(|s| s.reasoning_effort_for(&model))
+                .and_then(Self::parse_reasoning_effort)
+        });
+
+        let tools_desc = tools::describe_tools(&disabled_tools);
+
+        let skill_dirs = skill::default_skill_dirs(self.project_dir.as_deref());
+        let mut skills = skill::load_skills(&skill_dirs);
+        for skill in &mut skills {
+            if disabled_skills.contains(&skill.id) {
+                skill.enabled = false;
+            }
+        }
+        let skills_rendered = skill::render_skills(&skills);
+
+        let system_prompt = PromptEngine::render_system(&HashMap::from([
+            ("PROJECT_CONTEXT".to_string(), instructions),
+            ("TOOLS".to_string(), tools_desc),
+            ("SKILLS".to_string(), skills_rendered),
+        ]));
+
+        let user_prompt = self.user_prompt.ok_or_else(|| {
+            crate::error::BimoError::Config("No user prompt provided".to_string())
+        })?;
+
+        let max_steps = self.max_steps.unwrap_or(self.settings.max_steps);
+
+        let api_format = provider.api_format;
+
+        let runner = AgentRunner {
+            provider_name: provider.name,
+            provider_model: model,
+            provider_api_key: provider.api_key,
+            provider_base_url: provider.base_url,
+            api_format,
+            system_prompt,
+            user_prompt,
+            max_steps,
+            temperature: self.temperature,
+            max_tokens: self.max_tokens,
+            reasoning_effort,
+            debug: self.settings.debug,
+            session_id: self
+                .session
+                .as_ref()
+                .map(|s| s.id.clone())
+                .unwrap_or_default(),
+            disabled_tools,
+            retry_attempts: self.retry_attempts.unwrap_or(self.settings.retry_attempts),
+            retry_timeout_secs: self
+                .retry_timeout_secs
+                .unwrap_or(self.settings.retry_timeout_secs),
+            project_dir: self.project_dir.clone(),
+            snapshots_enabled: self.settings.snapshots,
+        };
+
+        let session = self.session.unwrap_or_default();
+
+        Ok(Agent {
+            runner: Some(runner),
+            session,
+        })
     }
 
     /// Sets the provider to use.
@@ -200,96 +292,17 @@ impl AgentBuilder {
         instructions
     }
 
-    /// Consumes the builder and produces an [`Agent`].
+    /// Maps a raw models.dev reasoning value to aisdk's [`ReasoningEffort`].
     ///
-    /// # Errors
-    ///
-    /// Returns a `BimoError::Config` if no provider or user prompt was set.
-    pub fn build(self) -> Result<Agent> {
-        let instructions = self.load_instructions();
-
-        let disabled_tools = self
-            .session
-            .as_ref()
-            .map(|s| s.disabled_tools().clone())
-            .unwrap_or_default();
-        let disabled_skills = self
-            .session
-            .as_ref()
-            .map(|s| s.disabled_skills().clone())
-            .unwrap_or_default();
-
-        let provider = self
-            .provider
-            .ok_or_else(|| crate::error::BimoError::Config("No provider configured".to_string()))?;
-
-        let model = self.model.unwrap_or_else(|| provider.id.clone());
-
-        let reasoning_effort = self.reasoning_effort.or_else(|| {
-            self.session
-                .as_ref()
-                .and_then(|s| s.reasoning_effort_for(&model))
-                .and_then(parse_reasoning_effort)
-        });
-
-        let tools_desc = tools::describe_tools(&disabled_tools);
-
-        let skill_dirs = skill::default_skill_dirs(self.project_dir.as_deref());
-        let mut skills = skill::load_skills(&skill_dirs);
-        for skill in &mut skills {
-            if disabled_skills.contains(&skill.id) {
-                skill.enabled = false;
-            }
+    /// Only the portable subset is expressible through aisdk; `none`/`default`
+    /// and unknown values map to `None` (provider default).
+    fn parse_reasoning_effort(value: &str) -> Option<ReasoningEffort> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "minimal" | "low" => Some(ReasoningEffort::Low),
+            "medium" => Some(ReasoningEffort::Medium),
+            "high" | "xhigh" | "max" => Some(ReasoningEffort::High),
+            _ => None,
         }
-        let skills_rendered = skill::render_skills(&skills);
-
-        let system_prompt = PromptEngine::render_system(&HashMap::from([
-            ("PROJECT_CONTEXT".to_string(), instructions),
-            ("TOOLS".to_string(), tools_desc),
-            ("SKILLS".to_string(), skills_rendered),
-        ]));
-
-        let user_prompt = self.user_prompt.ok_or_else(|| {
-            crate::error::BimoError::Config("No user prompt provided".to_string())
-        })?;
-
-        let max_steps = self.max_steps.unwrap_or(self.settings.max_steps);
-
-        let api_format = provider.api_format;
-
-        let runner = AgentRunner {
-            provider_name: provider.name,
-            provider_model: model,
-            provider_api_key: provider.api_key,
-            provider_base_url: provider.base_url,
-            api_format,
-            system_prompt,
-            user_prompt,
-            max_steps,
-            temperature: self.temperature,
-            max_tokens: self.max_tokens,
-            reasoning_effort,
-            debug: self.settings.debug,
-            session_id: self
-                .session
-                .as_ref()
-                .map(|s| s.id.clone())
-                .unwrap_or_default(),
-            disabled_tools,
-            retry_attempts: self.retry_attempts.unwrap_or(self.settings.retry_attempts),
-            retry_timeout_secs: self
-                .retry_timeout_secs
-                .unwrap_or(self.settings.retry_timeout_secs),
-            project_dir: self.project_dir.clone(),
-            snapshots_enabled: self.settings.snapshots,
-        };
-
-        let session = self.session.unwrap_or_default();
-
-        Ok(Agent {
-            runner: Some(runner),
-            session,
-        })
     }
 }
 

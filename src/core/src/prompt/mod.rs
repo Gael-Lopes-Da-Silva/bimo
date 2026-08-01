@@ -7,22 +7,6 @@ const SUMMARY_PROMPT: &str = include_str!("prompts/SUMMARY.md");
 const SESSION_NAME_PROMPT: &str = include_str!("prompts/SESSION_NAME.md");
 const COMPACT_PROMPT: &str = include_str!("prompts/COMPACT.md");
 
-/// Renders a template string by replacing `{{KEY}}` placeholders with values.
-/// Unknown placeholders are left as-is.
-pub fn render_template(template: &str, vars: &HashMap<String, String>) -> String {
-    let mut result = template.to_string();
-    let mut keys: Vec<&String> = vars.keys().collect();
-    // Sort by key length descending so longer placeholders are replaced first,
-    // preventing partial replacements.
-    keys.sort_by(|a, b| b.len().cmp(&a.len()).then(a.cmp(b)));
-    for key in keys {
-        let value = vars.get(key).unwrap();
-        let placeholder = format!("{{{{{key}}}}}");
-        result = result.replace(&placeholder, value);
-    }
-    result
-}
-
 /// Loads and renders system prompt templates embedded at compile time.
 /// Templates use `{{PLACEHOLDER}}` notation for variable substitution.
 pub struct PromptEngine;
@@ -87,28 +71,44 @@ impl PromptEngine {
             default_vars.insert(k.clone(), v.clone());
         }
 
-        render_template(SYSTEM_PROMPT, &default_vars)
+        PromptEngine::render(SYSTEM_PROMPT, &default_vars)
     }
 
     /// Renders the summary prompt for a given summary text.
     pub fn render_summary(summary: &str) -> String {
         let mut vars = HashMap::new();
         vars.insert("SUMMARY".to_string(), summary.to_string());
-        render_template(SUMMARY_PROMPT, &vars)
+        PromptEngine::render(SUMMARY_PROMPT, &vars)
     }
 
     /// Renders the session-naming prompt for a given conversation context.
     pub fn render_session_name(context: &str) -> String {
         let mut vars = HashMap::new();
         vars.insert("CONTEXT".to_string(), context.to_string());
-        render_template(SESSION_NAME_PROMPT, &vars)
+        PromptEngine::render(SESSION_NAME_PROMPT, &vars)
     }
 
     /// Renders the compaction prompt for a given conversation history.
     pub fn render_compact(conversation: &str) -> String {
         let mut vars = HashMap::new();
         vars.insert("CONVERSATION".to_string(), conversation.to_string());
-        render_template(COMPACT_PROMPT, &vars)
+        PromptEngine::render(COMPACT_PROMPT, &vars)
+    }
+
+    /// Renders a template string by replacing `{{KEY}}` placeholders with values.
+    /// Unknown placeholders are left as-is.
+    pub fn render(template: &str, vars: &HashMap<String, String>) -> String {
+        let mut result = template.to_string();
+        let mut keys: Vec<&String> = vars.keys().collect();
+        // Sort by key length descending so longer placeholders are replaced first,
+        // preventing partial replacements.
+        keys.sort_by(|a, b| b.len().cmp(&a.len()).then(a.cmp(b)));
+        for key in keys {
+            let value = vars.get(key).unwrap();
+            let placeholder = format!("{{{{{key}}}}}");
+            result = result.replace(&placeholder, value);
+        }
+        result
     }
 }
 

@@ -555,6 +555,42 @@ impl Session {
         Ok(fork)
     }
 
+    /// Exports session to Markdown file.
+    pub fn export_markdown(&self, path: &std::path::Path) -> crate::Result<()> {
+        let mut md = format!(
+            "# Session {}\n\nCreated: {}\nUpdated: {}\n\n",
+            self.id, self.created_at, self.updated_at
+        );
+        md.push_str("## Messages\n\n");
+        for msg in &self.messages {
+            md.push_str(&format!(
+                "- **[{}] {}**: {}\n",
+                msg.role, msg.timestamp, msg.content
+            ));
+        }
+        if !self.archived_messages.is_empty() {
+            md.push_str("\n## Archived messages\n\n");
+            for batch in &self.archived_messages {
+                for msg in batch {
+                    md.push_str(&format!(
+                        "- **[{}] {}**: {}\n",
+                        msg.role, msg.timestamp, msg.content
+                    ));
+                }
+                md.push('\n');
+            }
+        }
+        std::fs::write(path, md)?;
+        Ok(())
+    }
+
+    /// Exports session to JSON file.
+    pub fn export_json(&self, path: &std::path::Path) -> crate::Result<()> {
+        let content = serde_json::to_string_pretty(self)?;
+        std::fs::write(path, content)?;
+        Ok(())
+    }
+
     /// Rewrites the snapshot ids referenced by `records` to duplicated copies,
     /// so the owning session never shares snapshot files with another session.
     /// Best-effort: a snapshot that cannot be loaded or duplicated is left
@@ -607,42 +643,6 @@ impl Session {
                 warn!("Failed to load filesystem snapshot {snapshot_id} for {operation}: {e}")
             }
         }
-    }
-
-    /// Exports session to Markdown file.
-    pub fn export_markdown(&self, path: &std::path::Path) -> crate::Result<()> {
-        let mut md = format!(
-            "# Session {}\n\nCreated: {}\nUpdated: {}\n\n",
-            self.id, self.created_at, self.updated_at
-        );
-        md.push_str("## Messages\n\n");
-        for msg in &self.messages {
-            md.push_str(&format!(
-                "- **[{}] {}**: {}\n",
-                msg.role, msg.timestamp, msg.content
-            ));
-        }
-        if !self.archived_messages.is_empty() {
-            md.push_str("\n## Archived messages\n\n");
-            for batch in &self.archived_messages {
-                for msg in batch {
-                    md.push_str(&format!(
-                        "- **[{}] {}**: {}\n",
-                        msg.role, msg.timestamp, msg.content
-                    ));
-                }
-                md.push('\n');
-            }
-        }
-        std::fs::write(path, md)?;
-        Ok(())
-    }
-
-    /// Exports session to JSON file.
-    pub fn export_json(&self, path: &std::path::Path) -> crate::Result<()> {
-        let content = serde_json::to_string_pretty(self)?;
-        std::fs::write(path, content)?;
-        Ok(())
     }
 }
 
