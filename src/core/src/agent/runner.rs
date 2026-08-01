@@ -69,12 +69,12 @@ impl AgentRunner {
     /// surface it to the user.
     pub fn validate_selection(&self) -> Result<()> {
         if self.provider_name.trim().is_empty() {
-            return Err(crate::error::BimoError::Config(
+            return Err(crate::error::CustomError::Config(
                 "No provider selected. Choose a provider before running the agent".to_string(),
             ));
         }
         if self.provider_model.trim().is_empty() {
-            return Err(crate::error::BimoError::Config(format!(
+            return Err(crate::error::CustomError::Config(format!(
                 "No model selected for provider {}",
                 self.provider_name
             )));

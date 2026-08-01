@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// Controls session lifecycle, agent defaults, and cleanup behaviour.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Settings {
+pub struct SettingsConfig {
     /// Sessions older than this many hours are eligible for cleanup.
     #[serde(default = "default_session_ttl_hours")]
     pub session_ttl_hours: u64,
@@ -79,7 +79,7 @@ fn default_snapshots() -> bool {
     true
 }
 
-impl Default for Settings {
+impl Default for SettingsConfig {
     fn default() -> Self {
         Self {
             session_ttl_hours: default_session_ttl_hours(),
@@ -96,7 +96,7 @@ impl Default for Settings {
     }
 }
 
-impl Settings {
+impl SettingsConfig {
     /// Returns the path to `settings.json` inside `~/.config/bimo/`.
     pub fn path() -> std::path::PathBuf {
         let base = dirs::config_dir().unwrap_or_else(|| std::path::PathBuf::from("~/.config"));
@@ -107,7 +107,7 @@ impl Settings {
     pub fn load() -> crate::Result<Self> {
         let path = Self::path();
         if !path.exists() {
-            let settings = Settings::default();
+            let settings = SettingsConfig::default();
             settings.save()?;
             return Ok(settings);
         }

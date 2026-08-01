@@ -1,9 +1,10 @@
 //! Skill loading — scans project and user directories for `SKILL.md` files,
 //! parses their frontmatter, and renders them for prompt injection.
 
-use serde::Deserialize;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+
+use serde::Deserialize;
 use tracing::warn;
 
 /// A loaded skill with metadata and instruction content.

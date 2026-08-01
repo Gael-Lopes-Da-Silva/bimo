@@ -3,12 +3,13 @@
 use std::cmp::Reverse;
 use std::collections::HashMap;
 use std::sync::Arc;
+
 use tokio::sync::{Mutex, RwLock};
 use tokio::time::{Duration, interval};
 use tracing::{info, warn};
 
-use super::Session;
-use crate::config::Settings;
+use crate::Session;
+use crate::config::SettingsConfig;
 
 /// Manages session lifecycle: creation, retrieval, persistence, and cleanup.
 ///
@@ -16,14 +17,14 @@ use crate::config::Settings;
 /// sessions are removed by a background task.
 pub struct SessionManager {
     sessions: Arc<RwLock<HashMap<String, Session>>>,
-    settings: Settings,
+    settings: SettingsConfig,
     cleanup_handle: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
 }
 
 impl SessionManager {
     /// Creates a new manager, loads existing sessions from disk, and starts
     /// the background cleanup task.
-    pub async fn new(settings: Settings) -> crate::Result<Self> {
+    pub async fn new(settings: SettingsConfig) -> crate::Result<Self> {
         let manager = Self {
             sessions: Arc::new(RwLock::new(HashMap::new())),
             settings,
@@ -124,7 +125,7 @@ impl SessionManager {
         let session = self
             .get(id)
             .await
-            .ok_or_else(|| crate::error::BimoError::Session(format!("Session {id} not found")))?;
+            .ok_or_else(|| crate::error::CustomError::Session(format!("Session {id} not found")))?;
         let fork = session.fork()?;
         let mut map = self.sessions.write().await;
         map.insert(fork.id.clone(), fork.clone());

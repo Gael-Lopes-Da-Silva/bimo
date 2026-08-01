@@ -2,6 +2,8 @@
 
 mod manager;
 
+pub use manager::SessionManager;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
@@ -11,8 +13,6 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::tools::{TodoList, is_builtin};
-
-pub use manager::SessionManager;
 
 /// A single message in a session conversation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -188,7 +188,7 @@ impl Session {
     /// Returns a `BimoError::Tool` if `name` is not a known built-in tool.
     pub fn disable_tool(&mut self, name: &str) -> crate::Result<bool> {
         if !is_builtin(name) {
-            return Err(crate::error::BimoError::Tool(format!(
+            return Err(crate::error::CustomError::Tool(format!(
                 "Unknown tool '{name}'"
             )));
         }
@@ -203,7 +203,7 @@ impl Session {
     /// Returns a `BimoError::Tool` if `name` is not a known built-in tool.
     pub fn enable_tool(&mut self, name: &str) -> crate::Result<bool> {
         if !is_builtin(name) {
-            return Err(crate::error::BimoError::Tool(format!(
+            return Err(crate::error::CustomError::Tool(format!(
                 "Unknown tool '{name}'"
             )));
         }
@@ -427,7 +427,7 @@ impl Session {
                 .iter()
                 .position(|m| m.role == "user" && m.id == id)
                 .ok_or_else(|| {
-                    crate::error::BimoError::Session(format!(
+                    crate::error::CustomError::Session(format!(
                         "Cannot undo: no user message with id {id}"
                     ))
                 })?,
@@ -435,7 +435,7 @@ impl Session {
                 .messages
                 .iter()
                 .rposition(|m| m.role == "user")
-                .ok_or_else(|| crate::error::BimoError::Session("Nothing to undo".to_string()))?,
+                .ok_or_else(|| crate::error::CustomError::Session("Nothing to undo".to_string()))?,
         };
 
         let removed_messages: Vec<Message> = self.messages[cut..].to_vec();
@@ -483,7 +483,7 @@ impl Session {
     /// does not match any undone message.
     pub fn redo(&mut self, target: Option<&str>) -> crate::Result<()> {
         if self.undo_stack.is_empty() {
-            return Err(crate::error::BimoError::Session(
+            return Err(crate::error::CustomError::Session(
                 "Nothing to redo".to_string(),
             ));
         }
@@ -496,7 +496,7 @@ impl Session {
                     .iter()
                     .rposition(|b| b.messages.iter().any(|m| m.id == id))
                     .ok_or_else(|| {
-                        crate::error::BimoError::Session(format!(
+                        crate::error::CustomError::Session(format!(
                             "Cannot redo: no undone message with id {id}"
                         ))
                     })?;

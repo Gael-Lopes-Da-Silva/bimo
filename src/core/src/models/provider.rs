@@ -7,7 +7,7 @@ use aisdk::core::DynamicModel;
 use aisdk::providers::{Anthropic, Google, OpenAICompatible};
 
 use crate::config::ApiFormat;
-use crate::error::{BimoError, Result};
+use crate::error::{CustomError, Result};
 
 /// Erased OpenAI-compatible model type used at runtime.
 type OpenAIModel = OpenAICompatible<DynamicModel>;
@@ -37,7 +37,7 @@ impl ModelProvider {
             }
             ApiFormat::Google => Self::build_google(base_url, model_name, api_key).await,
             ApiFormat::Anthropic => Self::build_anthropic(base_url, model_name, api_key).await,
-            ApiFormat::Other(fmt) => Err(BimoError::Provider(format!(
+            ApiFormat::Other(fmt) => Err(CustomError::Provider(format!(
                 "unsupported API format: {fmt}"
             ))),
         }
@@ -59,7 +59,7 @@ impl ModelProvider {
             .build()
             .map(|m| Self::OpenAI(Box::new(m)))
             .map_err(|e| {
-                BimoError::Provider(format!("Failed to build OpenAI-compatible model: {e}"))
+                CustomError::Provider(format!("Failed to build OpenAI-compatible model: {e}"))
             })
     }
 
@@ -78,7 +78,7 @@ impl ModelProvider {
         builder
             .build()
             .map(|m| Self::Anthropic(Box::new(m)))
-            .map_err(|e| BimoError::Provider(format!("Failed to build Anthropic model: {e}")))
+            .map_err(|e| CustomError::Provider(format!("Failed to build Anthropic model: {e}")))
     }
 
     /// Builds a Google model client.
@@ -96,7 +96,7 @@ impl ModelProvider {
         builder
             .build()
             .map(|m| Self::Google(Box::new(m)))
-            .map_err(|e| BimoError::Provider(format!("Failed to build Google model: {e}")))
+            .map_err(|e| CustomError::Provider(format!("Failed to build Google model: {e}")))
     }
 }
 

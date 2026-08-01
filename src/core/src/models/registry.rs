@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use tokio::sync::RwLock;
 
-use super::types::ModelEntry;
+use crate::ModelEntry;
 use crate::error::Result;
 use crate::providers::{CloudProviderRegistry, ProviderMap};
 

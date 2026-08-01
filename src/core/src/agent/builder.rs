@@ -2,14 +2,14 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use tracing::info;
 
 use aisdk::core::language_model::ReasoningEffort;
+use tracing::info;
 
 use crate::agent::Agent;
 use crate::agent::AgentRunner;
 use crate::config::Provider;
-use crate::config::Settings;
+use crate::config::SettingsConfig;
 use crate::error::Result;
 use crate::prompt::PromptEngine;
 use crate::skill;
@@ -22,7 +22,7 @@ use crate::tools;
 pub struct AgentBuilder {
     provider: Option<Provider>,
     model: Option<String>,
-    settings: Settings,
+    settings: SettingsConfig,
     project_dir: Option<PathBuf>,
     session: Option<crate::session::Session>,
     user_prompt: Option<String>,
@@ -40,7 +40,7 @@ impl AgentBuilder {
         Self {
             provider: None,
             model: None,
-            settings: Settings::default(),
+            settings: SettingsConfig::default(),
             project_dir: None,
             session: None,
             user_prompt: None,
@@ -72,9 +72,9 @@ impl AgentBuilder {
             .map(|s| s.disabled_skills().clone())
             .unwrap_or_default();
 
-        let provider = self
-            .provider
-            .ok_or_else(|| crate::error::BimoError::Config("No provider configured".to_string()))?;
+        let provider = self.provider.ok_or_else(|| {
+            crate::error::CustomError::Config("No provider configured".to_string())
+        })?;
 
         let model = self.model.unwrap_or_else(|| provider.id.clone());
 
@@ -103,7 +103,7 @@ impl AgentBuilder {
         ]));
 
         let user_prompt = self.user_prompt.ok_or_else(|| {
-            crate::error::BimoError::Config("No user prompt provided".to_string())
+            crate::error::CustomError::Config("No user prompt provided".to_string())
         })?;
 
         let max_steps = self.max_steps.unwrap_or(self.settings.max_steps);
@@ -160,7 +160,7 @@ impl AgentBuilder {
     }
 
     /// Overrides the default settings.
-    pub fn with_settings(mut self, settings: Settings) -> Self {
+    pub fn with_settings(mut self, settings: SettingsConfig) -> Self {
         self.settings = settings;
         self
     }

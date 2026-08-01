@@ -86,10 +86,9 @@ impl Agent {
     ///
     /// The agent is consumed (may only be run once).
     pub async fn run(&mut self) -> Result<broadcast::Receiver<AgentEvent>> {
-        let runner = self
-            .runner
-            .take()
-            .ok_or_else(|| crate::error::BimoError::Agent("Agent already consumed".to_string()))?;
+        let runner = self.runner.take().ok_or_else(|| {
+            crate::error::CustomError::Agent("Agent already consumed".to_string())
+        })?;
         runner.validate_selection()?;
 
         let (tx, rx) = broadcast::channel(256);
@@ -127,10 +126,9 @@ impl Agent {
     pub async fn run_steerable(
         &mut self,
     ) -> Result<(broadcast::Receiver<AgentEvent>, mpsc::Sender<SteerCommand>)> {
-        let runner = self
-            .runner
-            .take()
-            .ok_or_else(|| crate::error::BimoError::Agent("Agent already consumed".to_string()))?;
+        let runner = self.runner.take().ok_or_else(|| {
+            crate::error::CustomError::Agent("Agent already consumed".to_string())
+        })?;
         runner.validate_selection()?;
 
         let (tx, rx) = broadcast::channel(256);
@@ -159,13 +157,12 @@ impl Agent {
 
     /// Generates a concise session name/title using the model and session context.
     pub async fn generate_session_name(&mut self) -> Result<String> {
-        let runner = self
-            .runner
-            .as_ref()
-            .ok_or_else(|| crate::error::BimoError::Agent("Agent already consumed".to_string()))?;
+        let runner = self.runner.as_ref().ok_or_else(|| {
+            crate::error::CustomError::Agent("Agent already consumed".to_string())
+        })?;
 
         let conversation = if self.session.messages.is_empty() {
-            return Err(crate::error::BimoError::Agent(
+            return Err(crate::error::CustomError::Agent(
                 "Cannot generate session name: no messages in session".to_string(),
             ));
         } else {
@@ -174,7 +171,7 @@ impl Agent {
         let name_prompt = PromptEngine::render_session_name(&conversation);
 
         let model = runner.build_model().await.map_err(|e| {
-            crate::error::BimoError::Agent(format!("Session naming model build failed: {}", e))
+            crate::error::CustomError::Agent(format!("Session naming model build failed: {}", e))
         })?;
         dispatch_model!(model, self, name_with_model, &name_prompt)
     }
@@ -192,10 +189,9 @@ impl Agent {
     ///
     /// Returns the summary text on success.
     pub async fn compact(&mut self) -> Result<String> {
-        let runner = self
-            .runner
-            .as_ref()
-            .ok_or_else(|| crate::error::BimoError::Agent("Agent already consumed".to_string()))?;
+        let runner = self.runner.as_ref().ok_or_else(|| {
+            crate::error::CustomError::Agent("Agent already consumed".to_string())
+        })?;
 
         if self.session.messages.is_empty() {
             return Ok(String::new());
@@ -205,7 +201,7 @@ impl Agent {
         let compact_prompt = PromptEngine::render_compact(&conversation);
 
         let model = runner.build_model().await.map_err(|e| {
-            crate::error::BimoError::Agent(format!("Compaction model build failed: {}", e))
+            crate::error::CustomError::Agent(format!("Compaction model build failed: {}", e))
         })?;
         dispatch_model!(model, self, compact_with_model, &compact_prompt)
     }
@@ -219,10 +215,9 @@ impl Agent {
             .prompt(name_prompt)
             .build();
 
-        let response = request
-            .generate_text()
-            .await
-            .map_err(|e| crate::error::BimoError::Agent(format!("Session naming failed: {}", e)))?;
+        let response = request.generate_text().await.map_err(|e| {
+            crate::error::CustomError::Agent(format!("Session naming failed: {}", e))
+        })?;
 
         let title = response.text().unwrap_or_default().trim().to_string();
         Ok(title)
@@ -240,7 +235,7 @@ impl Agent {
         let response = request
             .generate_text()
             .await
-            .map_err(|e| crate::error::BimoError::Agent(format!("Compaction failed: {}", e)))?;
+            .map_err(|e| crate::error::CustomError::Agent(format!("Compaction failed: {}", e)))?;
 
         let summary = response.text().unwrap_or_default();
         let rendered_summary = PromptEngine::render_summary(&summary);

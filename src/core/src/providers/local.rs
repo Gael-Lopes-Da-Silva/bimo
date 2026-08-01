@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use crate::config::{ApiFormat, Provider};
-use crate::error::BimoError;
+use crate::error::CustomError;
 
 /// Registry of built-in local providers known to the system
 /// (ollama, lmstudio, vllm, llamacpp).
@@ -59,7 +59,7 @@ impl LocalProviderRegistry {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(5))
             .build()
-            .map_err(|e| BimoError::Msg(format!("Failed to create HTTP client: {e}")))?;
+            .map_err(|e| CustomError::Msg(format!("Failed to create HTTP client: {e}")))?;
 
         let base = provider.base_url.trim_end_matches('/');
         let url = format!("{base}/models");
@@ -67,11 +67,11 @@ impl LocalProviderRegistry {
             .get(&url)
             .send()
             .await
-            .map_err(|e| BimoError::Msg(format!("Failed to fetch models: {e}")))?;
+            .map_err(|e| CustomError::Msg(format!("Failed to fetch models: {e}")))?;
         let data: serde_json::Value = resp
             .json()
             .await
-            .map_err(|e| BimoError::Msg(format!("Failed to parse models response: {e}")))?;
+            .map_err(|e| CustomError::Msg(format!("Failed to parse models response: {e}")))?;
         let models = data["data"]
             .as_array()
             .map(|arr| {

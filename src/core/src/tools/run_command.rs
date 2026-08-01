@@ -1,7 +1,8 @@
-use aisdk::core::tools::Tool;
-use aisdk::macros::tool;
 use std::process::Command;
 use std::time::Duration;
+
+use aisdk::core::tools::Tool;
+use aisdk::macros::tool;
 use tracing::info;
 
 /// Executes a shell command in the workspace and captures its output.
@@ -102,7 +103,7 @@ fn wait_with_timeout(
             Ok(None) => {
                 if start.elapsed() >= timeout {
                     let _ = child.kill();
-                    return Err(crate::error::BimoError::Msg(format!(
+                    return Err(crate::error::CustomError::Msg(format!(
                         "Command timed out after {}s: {}",
                         timeout.as_secs(),
                         command
@@ -110,7 +111,7 @@ fn wait_with_timeout(
                 }
                 std::thread::sleep(Duration::from_millis(50));
             }
-            Err(e) => return Err(crate::error::BimoError::Io(e)),
+            Err(e) => return Err(crate::error::CustomError::Io(e)),
         }
     }
 }

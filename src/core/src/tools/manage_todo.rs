@@ -1,11 +1,10 @@
 use std::sync::{Arc, Mutex, OnceLock};
 
+use aisdk::core::tools::Tool;
+use aisdk::macros::tool;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tracing::info;
-
-use aisdk::core::tools::Tool;
-use aisdk::macros::tool;
 
 static TODO_LIST: OnceLock<SharedTodoList> = OnceLock::new();
 

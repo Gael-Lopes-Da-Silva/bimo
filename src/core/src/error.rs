@@ -4,7 +4,7 @@ use thiserror::Error;
 
 /// Unified error type covering all Bimo core operations.
 #[derive(Error, Debug)]
-pub enum BimoError {
+pub enum CustomError {
     #[error("{0}")]
     Msg(String),
     #[error("configuration error: {0}")]
@@ -29,4 +29,4 @@ pub enum BimoError {
     Other(String),
 }
 
-pub type Result<T> = std::result::Result<T, BimoError>;
+pub type Result<T> = std::result::Result<T, CustomError>;

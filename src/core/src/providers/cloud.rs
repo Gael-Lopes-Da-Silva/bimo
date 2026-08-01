@@ -9,7 +9,7 @@ use tracing::{info, warn};
 use super::local::LocalProviderRegistry;
 use super::types::{ProviderEntry, ProviderMap};
 use crate::config::{ApiFormat, Provider};
-use crate::error::{BimoError, Result};
+use crate::error::{CustomError, Result};
 
 const MODELS_DEV_URL: &str = "https://models.dev/api.json";
 
@@ -65,7 +65,7 @@ impl CloudProviderRegistry {
     pub async fn refresh_provider(&self, provider_id: &str) -> Result<()> {
         let providers = self.fetch_remote().await?;
         let entry = providers.get(provider_id).cloned().ok_or_else(|| {
-            BimoError::Msg(format!("Provider '{provider_id}' not found in models.dev"))
+            CustomError::Msg(format!("Provider '{provider_id}' not found in models.dev"))
         })?;
         {
             let mut map = self.providers.write().await;
@@ -182,21 +182,21 @@ impl CloudProviderRegistry {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(10))
             .build()
-            .map_err(|e| BimoError::Msg(format!("Failed to create HTTP client: {e}")))?;
+            .map_err(|e| CustomError::Msg(format!("Failed to create HTTP client: {e}")))?;
 
         let resp = client
             .get(MODELS_DEV_URL)
             .send()
             .await
-            .map_err(|e| BimoError::Msg(format!("HTTP request failed: {e}")))?;
+            .map_err(|e| CustomError::Msg(format!("HTTP request failed: {e}")))?;
 
         let bytes = resp
             .bytes()
             .await
-            .map_err(|e| BimoError::Msg(format!("Failed to read response body: {e}")))?;
+            .map_err(|e| CustomError::Msg(format!("Failed to read response body: {e}")))?;
 
         let providers: ProviderMap = serde_json::from_slice(&bytes)
-            .map_err(|e| BimoError::Msg(format!("JSON parse failed: {e}")))?;
+            .map_err(|e| CustomError::Msg(format!("JSON parse failed: {e}")))?;
 
         if let Err(e) = std::fs::write(&self.cache_path, &bytes) {
             warn!("Failed to write models cache: {e}");
@@ -207,7 +207,7 @@ impl CloudProviderRegistry {
 
     async fn load_cache(&self) -> Result<()> {
         if !self.cache_path.exists() {
-            return Err(BimoError::Other(
+            return Err(CustomError::Other(
                 "No models.dev cache available; run refresh()".to_string(),
             ));
         }

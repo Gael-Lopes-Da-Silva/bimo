@@ -92,14 +92,14 @@ impl Provider {
 ///
 /// Lists configured providers and optionally names a default.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProvidersFile {
+pub struct ProvidersConfig {
     #[serde(default)]
     pub providers: Vec<Provider>,
     #[serde(default)]
     pub default: Option<String>,
 }
 
-impl ProvidersFile {
+impl ProvidersConfig {
     /// Returns the path to `providers.json` inside `~/.config/bimo/`.
     pub fn path() -> std::path::PathBuf {
         let base = dirs::config_dir().unwrap_or_else(|| std::path::PathBuf::from("~/.config"));

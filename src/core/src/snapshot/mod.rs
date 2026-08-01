@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 use uuid::Uuid;
 
-use crate::error::{BimoError, Result};
+use crate::error::{CustomError, Result};
 
 /// Snapshot commits are pinned under this ref namespace so `git gc` cannot
 /// prune them between capture and restore.
@@ -270,20 +270,20 @@ impl Snapshot {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .spawn()
-            .map_err(|e| BimoError::Other(format!("failed to run `git check-ignore`: {e}")))?;
+            .map_err(|e| CustomError::Other(format!("failed to run `git check-ignore`: {e}")))?;
 
         let mut stdin = child
             .stdin
             .take()
-            .ok_or_else(|| BimoError::Other("failed to open git stdin".into()))?;
+            .ok_or_else(|| CustomError::Other("failed to open git stdin".into()))?;
         stdin
             .write_all(&input)
-            .map_err(|e| BimoError::Other(format!("failed to write to git check-ignore: {e}")))?;
+            .map_err(|e| CustomError::Other(format!("failed to write to git check-ignore: {e}")))?;
         drop(stdin);
 
         let output = child
             .wait_with_output()
-            .map_err(|e| BimoError::Other(format!("failed to run `git check-ignore`: {e}")))?;
+            .map_err(|e| CustomError::Other(format!("failed to run `git check-ignore`: {e}")))?;
 
         for path in output.stdout.split(|b| *b == 0) {
             if path.is_empty() {
@@ -303,7 +303,7 @@ impl Snapshot {
         let index_path = std::env::temp_dir().join(format!("bimo-index-{}.idx", Uuid::new_v4()));
         let index = index_path
             .to_str()
-            .ok_or_else(|| BimoError::Other("temporary index path is not valid UTF-8".into()))?;
+            .ok_or_else(|| CustomError::Other("temporary index path is not valid UTF-8".into()))?;
 
         let read = Snapshot::git_output(repo_root, &["read-tree", "HEAD"]);
         if !matches!(read, Ok(out) if out.status.success()) {
@@ -316,7 +316,7 @@ impl Snapshot {
             .current_dir(repo_root)
             .args(["add", "-A"])
             .output()
-            .map_err(|e| BimoError::Other(format!("failed to run `git add -A`: {e}")))?;
+            .map_err(|e| CustomError::Other(format!("failed to run `git add -A`: {e}")))?;
         if !add.status.success() {
             let _ = std::fs::remove_file(&index_path);
             return Err(Snapshot::git_failed(&["add", "-A"], &add));
@@ -327,7 +327,7 @@ impl Snapshot {
             .current_dir(repo_root)
             .args(["write-tree"])
             .output()
-            .map_err(|e| BimoError::Other(format!("failed to run `git write-tree`: {e}")))?;
+            .map_err(|e| CustomError::Other(format!("failed to run `git write-tree`: {e}")))?;
         let _ = std::fs::remove_file(&index_path);
 
         if !write.status.success() {
@@ -379,7 +379,7 @@ impl Snapshot {
                 dirs.push(path);
             } else {
                 let rel = path.strip_prefix(repo_root).map_err(|e| {
-                    BimoError::Other(format!("path {path:?} is outside {repo_root:?}: {e}"))
+                    CustomError::Other(format!("path {path:?} is outside {repo_root:?}: {e}"))
                 })?;
                 if !snapshot_files.contains(rel) {
                     candidates.push(rel.to_path_buf());
@@ -408,11 +408,11 @@ impl Snapshot {
             cmd.env(key, value);
         }
         cmd.output()
-            .map_err(|e| BimoError::Other(format!("failed to run `git {}`: {e}", args.join(" "))))
+            .map_err(|e| CustomError::Other(format!("failed to run `git {}`: {e}", args.join(" "))))
     }
 
-    fn git_failed(args: &[&str], out: &Output) -> BimoError {
-        BimoError::Other(format!(
+    fn git_failed(args: &[&str], out: &Output) -> CustomError {
+        CustomError::Other(format!(
             "`git {}` failed: {}",
             args.join(" "),
             String::from_utf8_lossy(&out.stderr).trim()
