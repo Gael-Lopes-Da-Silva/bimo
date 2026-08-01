@@ -304,13 +304,14 @@ impl AgentRunner {
                 if !final_text.is_empty() {
                     session.add_message("assistant".to_string(), final_text);
                 }
-                self.persist_session(&session);
+                self.persist_session(&mut session);
                 break;
             }
 
-            // Pause point: wait for a steering decision before executing tools.
-            // Injecting guidance never cancels a tool call; the guidance is
-            // applied at the next safe point, after the tool results.
+            // Pause point: announce the pending tool calls, then wait for a
+            // steering decision before executing them. Injecting guidance never
+            // cancels a tool call; the guidance is applied at the next safe
+            // point, after the tool results.
             let mut pending_steer: Option<String> = None;
             if let Some(rx) = steer_rx.as_mut()
                 && let Some(cmd) = rx.recv().await
@@ -356,7 +357,7 @@ impl AgentRunner {
                     "tool".to_string(),
                     format!("{}({}): {}", info.tool.name, info.tool.id, result_text),
                 );
-                self.persist_session(&session);
+                self.persist_session(&mut session);
 
                 self.emit_event(
                     AgentEvent::ToolCallEnd {
@@ -371,13 +372,13 @@ impl AgentRunner {
             if let Some(text) = pending_steer {
                 working.push(Message::User(UserMessage::new(text.clone())));
                 session.add_message("user".to_string(), text.clone());
-                self.persist_session(&session);
+                self.persist_session(&mut session);
                 self.emit_event(AgentEvent::Steering(text), &tx);
             }
         }
 
         self.capture_after_snapshot(&mut session);
-        self.persist_session(&session);
+        self.persist_session(&mut session);
         self.emit_event(AgentEvent::Done, &tx);
     }
 
@@ -408,8 +409,11 @@ impl AgentRunner {
         let _ = tx.send(event);
     }
 
-    /// Best-effort persistence of the running conversation.
-    fn persist_session(&self, session: &Session) {
+    /// Best-effort persistence of the running conversation. The global todo
+    /// singleton (mutated by `manage_todo`) is copied into the session first
+    /// so the persisted session always carries the live todo state.
+    fn persist_session(&self, session: &mut Session) {
+        session.todo_list = crate::tools::todo_list_snapshot();
         if let Err(e) = session.save() {
             tracing::warn!("Failed to persist session {}: {}", session.id, e);
         }

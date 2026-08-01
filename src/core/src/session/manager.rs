@@ -2,9 +2,9 @@
 
 use std::cmp::Reverse;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::RwLock;
 use tokio::time::{Duration, interval};
 use tracing::{info, warn};
 
@@ -220,7 +220,10 @@ impl SessionManager {
             }
         });
 
-        let mut cleanup_handle = self.cleanup_handle.blocking_lock();
+        let mut cleanup_handle = self
+            .cleanup_handle
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         *cleanup_handle = Some(handle);
     }
 }

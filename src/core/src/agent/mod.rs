@@ -94,6 +94,9 @@ impl Agent {
         let (tx, rx) = broadcast::channel(256);
 
         let todos: tools::SharedTodoList = tools::new_shared_todo_list();
+        if let Ok(mut guard) = todos.lock() {
+            *guard = self.session.todo_list.clone();
+        }
         tools::init_todo_list(todos.clone());
 
         let log = format!(
@@ -135,6 +138,9 @@ impl Agent {
         let (steer_tx, steer_rx) = mpsc::channel(64);
 
         let todos: tools::SharedTodoList = tools::new_shared_todo_list();
+        if let Ok(mut guard) = todos.lock() {
+            *guard = self.session.todo_list.clone();
+        }
         tools::init_todo_list(todos.clone());
 
         let log = format!(

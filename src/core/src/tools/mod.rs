@@ -10,7 +10,7 @@ pub use edit_file::edit_file;
 pub use manage_todo::manage_todo;
 pub use manage_todo::{
     SharedTodoList, TodoItem, TodoList, TodoPriority, TodoStatus, init_todo_list,
-    new_shared_todo_list,
+    new_shared_todo_list, shared_todo_list, todo_list_snapshot,
 };
 pub use read_file::read_file;
 pub use run_command::run_command;

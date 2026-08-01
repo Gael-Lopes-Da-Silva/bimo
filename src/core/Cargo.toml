@@ -1,5 +1,5 @@
 [package]
-name = "bimo-core"
+name = "bimo_core"
 version = "0.1.0"
 edition = "2024"
 

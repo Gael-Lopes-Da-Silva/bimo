@@ -238,9 +238,37 @@ pub fn new_shared_todo_list() -> SharedTodoList {
     Arc::new(Mutex::new(TodoList::new()))
 }
 
-/// Initializes the global todo list singleton.
+/// Initializes (or re-seeds) the global todo list singleton.
 ///
-/// Must be called once before `manage_todo` is used.
+/// The first call installs `todo`; later calls replace the singleton's
+/// contents with `todo`'s, so each agent run can seed the tool's list from
+/// its session without a process-global rebuild.
 pub fn init_todo_list(todo: SharedTodoList) {
-    let _ = TODO_LIST.set(todo);
+    match TODO_LIST.get() {
+        Some(existing) => {
+            if let (Ok(mut existing_guard), Ok(new_guard)) = (existing.lock(), todo.lock()) {
+                *existing_guard = new_guard.clone();
+            }
+        }
+        None => {
+            let _ = TODO_LIST.set(todo);
+        }
+    }
+}
+
+/// Returns a handle to the global shared todo list, if initialized.
+pub fn shared_todo_list() -> Option<SharedTodoList> {
+    TODO_LIST.get().cloned()
+}
+
+/// Returns a snapshot of the global todo list contents, or an empty list when
+/// the singleton is not initialized.
+pub fn todo_list_snapshot() -> TodoList {
+    let Some(list) = shared_todo_list() else {
+        return TodoList::new();
+    };
+    match list.lock() {
+        Ok(guard) => guard.clone(),
+        Err(_) => TodoList::new(),
+    }
 }
