@@ -144,6 +144,7 @@ impl Agent {
             .runner
             .take()
             .ok_or_else(|| crate::error::BimoError::Agent("Agent already consumed".to_string()))?;
+        runner.validate_selection()?;
 
         let (tx, rx) = broadcast::channel(256);
 
@@ -184,6 +185,7 @@ impl Agent {
             .runner
             .take()
             .ok_or_else(|| crate::error::BimoError::Agent("Agent already consumed".to_string()))?;
+        runner.validate_selection()?;
 
         let (tx, rx) = broadcast::channel(256);
         let (steer_tx, steer_rx) = mpsc::channel(64);
@@ -325,6 +327,25 @@ enum GenerationOutcome {
 }
 
 impl AgentRunner {
+    /// Validates that a provider and a model were selected before a run.
+    ///
+    /// Returns a `Config` error naming the missing selection so the caller can
+    /// surface it to the user.
+    fn validate_selection(&self) -> Result<()> {
+        if self.provider_name.trim().is_empty() {
+            return Err(crate::error::BimoError::Config(
+                "No provider selected. Choose a provider before running the agent".to_string(),
+            ));
+        }
+        if self.provider_model.trim().is_empty() {
+            return Err(crate::error::BimoError::Config(format!(
+                "No model selected for provider {}",
+                self.provider_name
+            )));
+        }
+        Ok(())
+    }
+
     /// Writes an event to the debug log file when debug mode is enabled.
     fn persist_event(&self, event: &AgentEvent) {
         if self.debug {
