@@ -1,3 +1,3 @@
 [workspace]
 resolver = "3"
-members = ["src/api", "src/core", "src/rpc", "src/tui"]
+members = ["src/core", "src/tui"]
