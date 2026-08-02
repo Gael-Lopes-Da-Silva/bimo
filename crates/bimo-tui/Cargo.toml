@@ -2,3 +2,6 @@
 name = "bimo_tui"
 version = "0.1.0"
 edition = "2024"
+
+[dependencies]
+tuie = { version = "0.2.4", features = ["harmonious"] }
