@@ -28,10 +28,9 @@ impl CloudProviderRegistry {
     ///
     /// Call [`load`](Self::load) or [`refresh`](Self::refresh) to populate it.
     pub fn new() -> Self {
-        let base = dirs::config_dir().unwrap_or_else(|| PathBuf::from("~/.config"));
         Self {
             providers: Arc::new(RwLock::new(Default::default())),
-            cache_path: base.join("bimo").join("models_cache.json"),
+            cache_path: crate::paths::config_dir().join("models_cache.json"),
         }
     }
 

@@ -100,10 +100,9 @@ pub struct ProvidersConfig {
 }
 
 impl ProvidersConfig {
-    /// Returns the path to `providers.json` inside `~/.config/bimo/`.
+    /// Returns the path to `providers.json` inside the config directory.
     pub fn path() -> std::path::PathBuf {
-        let base = dirs::config_dir().unwrap_or_else(|| std::path::PathBuf::from("~/.config"));
-        base.join("bimo").join("providers.json")
+        crate::paths::config_dir().join("providers.json")
     }
 
     /// Loads providers from disk, returning an empty file if the path does not exist.

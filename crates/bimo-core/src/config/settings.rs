@@ -97,10 +97,9 @@ impl Default for SettingsConfig {
 }
 
 impl SettingsConfig {
-    /// Returns the path to `settings.json` inside `~/.config/bimo/`.
+    /// Returns the path to `settings.json` inside the config directory.
     pub fn path() -> std::path::PathBuf {
-        let base = dirs::config_dir().unwrap_or_else(|| std::path::PathBuf::from("~/.config"));
-        base.join("bimo").join("settings.json")
+        crate::paths::config_dir().join("settings.json")
     }
 
     /// Loads settings from disk, writing defaults if the file does not exist.

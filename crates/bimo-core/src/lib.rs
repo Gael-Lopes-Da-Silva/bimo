@@ -7,6 +7,7 @@ pub mod agent;
 pub mod config;
 pub mod error;
 pub mod models;
+pub mod paths;
 pub mod prompt;
 pub mod providers;
 pub mod session;
@@ -15,6 +16,7 @@ pub mod snapshot;
 pub mod tools;
 
 pub use agent::{Agent, AgentBuilder, AgentEvent, GenerationOutcome, SteerCommand};
+pub use aisdk::core::language_model::ReasoningEffort;
 pub use config::{ApiFormat, Provider, ProviderType, ProvidersConfig, SettingsConfig};
 pub use error::{CustomError, Result};
 pub use models::{ModelEntry, ModelRegistry};
