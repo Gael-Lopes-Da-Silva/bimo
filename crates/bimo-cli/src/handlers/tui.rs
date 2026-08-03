@@ -15,11 +15,12 @@ pub async fn run(args: &TuiArgs) -> crate::Result<()> {
         return Ok(());
     }
 
-    let session = match &args.session {
+    let _session = match &args.session {
         Some(id) => Session::load(id)
             .map_err(|e| CustomError::Session(format!("Cannot load session {id}: {e}")))?,
         None => Session::new(),
     };
 
-    bimo_tui::run_tui(session, args.theme.as_deref()).map_err(|e| CustomError::Other(e.to_string()))
+    // bimo_tui::run_tui(session, args.theme.as_deref()).map_err(|e| CustomError::Other(e.to_string()))
+    Ok(())
 }
