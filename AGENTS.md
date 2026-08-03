@@ -139,7 +139,8 @@ crates/bimo-tui/src/
 
 ## Notes for Next Session
 - Workspace builds clean, clippy clean, 17 tests pass (9 in bimo-tui, 8 in bimo-core).
-- `run_tui(session)` is now sync; `bimo/src/main.rs` calls it without `.await`.
+- All CLI parsing lives in `bimo-cli` (`Cli` with optional subcommand); the `bimo` binary is a thin wrapper calling `bimo_cli::run_env()`, which inits tracing, parses args, and runs on its own tokio runtime.
+- TUI entry: bare `bimo` or `bimo tui [--session ID] [--theme NAME] [--list-themes]`; `bimo-cli/src/handlers/tui.rs` loads the session and calls `bimo_tui::run_tui(session, theme)` (now takes a theme param).
 - Agent flow: user Enter -> `UnboundedSender<String>` in `Cursive::user_data` -> `prompt_loop` -> `run_agent_once` (builds `Agent` with `with_user_prompt`, `run_steerable`, drops steer_tx) -> `EventBridge` streams into named views (`current_assistant`, `current_reasoning`, `current_tool`) in the `messages` layout.
 - Provider/model come from env `ANTHROPIC_API_KEY` and `BIMO_MODEL`; hardcoded Anthropic cloud provider in `app::run_agent_once`.
 - Todo items:

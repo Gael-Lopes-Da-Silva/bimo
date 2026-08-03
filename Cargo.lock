@@ -119,12 +119,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "anyhow"
-version = "1.0.104"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
-
-[[package]]
 name = "async-trait"
 version = "0.1.91"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -157,13 +151,7 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 name = "bimo"
 version = "0.1.0"
 dependencies = [
- "anyhow",
- "bimo_core",
- "bimo_tui",
- "clap",
- "tokio",
- "tracing",
- "tracing-subscriber",
+ "bimo_cli",
 ]
 
 [[package]]
@@ -171,11 +159,13 @@ name = "bimo_cli"
 version = "0.1.0"
 dependencies = [
  "bimo_core",
+ "bimo_tui",
  "clap",
  "serde",
  "serde_json",
  "tempfile",
  "tokio",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -204,7 +194,6 @@ name = "bimo_tui"
 version = "0.1.0"
 dependencies = [
  "bimo_core",
- "clap",
  "cursive",
  "dirs",
  "pulldown-cmark",

@@ -15,8 +15,8 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(session: Session) -> Result<Self, crate::error::Error> {
-        let theme = load_theme(None)?;
+    pub fn new(session: Session, theme_name: Option<&str>) -> Result<Self, crate::error::Error> {
+        let theme = load_theme(theme_name)?;
 
         let mut siv = Cursive::new();
         siv.set_theme(theme.to_cursive_theme());
@@ -140,7 +140,7 @@ fn add_error_message(siv: &mut Cursive, content: &str) {
     });
 }
 
-pub fn run_tui(session: Session) -> Result<(), crate::error::Error> {
-    let app = App::new(session)?;
+pub fn run_tui(session: Session, theme: Option<&str>) -> Result<(), crate::error::Error> {
+    let app = App::new(session, theme)?;
     app.run()
 }

@@ -24,12 +24,15 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub json: bool,
 
+    /// When omitted, the TUI is launched (see the `tui` subcommand).
     #[command(subcommand)]
-    pub command: Command,
+    pub command: Option<Command>,
 }
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// Launch the interactive TUI.
+    Tui(TuiArgs),
     /// Configure and inspect providers.
     Provider {
         #[command(subcommand)]
@@ -250,6 +253,23 @@ pub enum SessionCommand {
 }
 
 // ---------------------------------------------------------------------------
+// tui
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Args, Default)]
+pub struct TuiArgs {
+    /// Session ID to load (optional).
+    #[arg(long)]
+    pub session: Option<String>,
+    /// Theme name to use.
+    #[arg(long)]
+    pub theme: Option<String>,
+    /// List available themes and exit.
+    #[arg(long)]
+    pub list_themes: bool,
+}
+
+// ---------------------------------------------------------------------------
 // run / shared agent options
 // ---------------------------------------------------------------------------
 
@@ -434,10 +454,36 @@ mod tests {
         assert!(cli.json);
         assert!(matches!(
             cli.command,
-            Command::Provider {
+            Some(Command::Provider {
                 sub: ProviderCommand::List
-            }
+            })
         ));
+    }
+
+    #[test]
+    fn parses_bare_invocation() {
+        let cli = parse(&[]);
+        assert!(cli.command.is_none());
+    }
+
+    #[test]
+    fn parses_tui_subcommand() {
+        let cli = parse(&["tui", "--session", "abc", "--theme", "dark"]);
+        let Some(Command::Tui(args)) = cli.command else {
+            panic!("expected tui subcommand")
+        };
+        assert_eq!(args.session.as_deref(), Some("abc"));
+        assert_eq!(args.theme.as_deref(), Some("dark"));
+        assert!(!args.list_themes);
+    }
+
+    #[test]
+    fn parses_tui_list_themes() {
+        let cli = parse(&["tui", "--list-themes"]);
+        let Some(Command::Tui(args)) = cli.command else {
+            panic!("expected tui subcommand")
+        };
+        assert!(args.list_themes);
     }
 
     #[test]
@@ -452,9 +498,9 @@ mod tests {
             "openai_compatible",
             "--discover",
         ]);
-        let Command::Provider {
+        let Some(Command::Provider {
             sub: ProviderCommand::Add(args),
-        } = cli.command
+        }) = cli.command
         else {
             panic!("expected provider add")
         };
@@ -471,9 +517,9 @@ mod tests {
     #[test]
     fn parses_provider_add_defaults() {
         let cli = parse(&["provider", "add", "anthropic"]);
-        let Command::Provider {
+        let Some(Command::Provider {
             sub: ProviderCommand::Add(args),
-        } = cli.command
+        }) = cli.command
         else {
             panic!("expected provider add")
         };
@@ -484,9 +530,9 @@ mod tests {
     #[test]
     fn parses_settings_set() {
         let cli = parse(&["settings", "set", "max_steps", "40"]);
-        let Command::Settings {
+        let Some(Command::Settings {
             sub: SettingsCommand::Set { key, value },
-        } = cli.command
+        }) = cli.command
         else {
             panic!("expected settings set")
         };
@@ -510,7 +556,7 @@ mod tests {
             "--name",
             "test",
         ]);
-        let Command::Run(args) = cli.command else {
+        let Some(Command::Run(args)) = cli.command else {
             panic!("expected run")
         };
         assert_eq!(args.prompt, "hello");
@@ -528,9 +574,9 @@ mod tests {
     #[test]
     fn parses_session_send() {
         let cli = parse(&["session", "send", "abc", "continue", "--provider", "x"]);
-        let Command::Session {
+        let Some(Command::Session {
             sub: SessionCommand::Send { id, message, .. },
-        } = cli.command
+        }) = cli.command
         else {
             panic!("expected session send")
         };
@@ -541,9 +587,9 @@ mod tests {
     #[test]
     fn parses_session_export_format() {
         let cli = parse(&["session", "export", "abc", "--format", "json"]);
-        let Command::Session {
+        let Some(Command::Session {
             sub: SessionCommand::Export { format, .. },
-        } = cli.command
+        }) = cli.command
         else {
             panic!("expected session export")
         };
