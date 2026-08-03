@@ -1,4 +1,4 @@
-//! TUI command handler — lists themes or launches the interactive TUI.
+//! TUI command handler — launches the interactive TUI.
 
 use bimo_core::error::CustomError;
 use bimo_core::session::Session;
@@ -7,11 +7,11 @@ use crate::cli::TuiArgs;
 
 pub async fn run(args: &TuiArgs) -> crate::Result<()> {
     if args.list_themes {
-        let themes = bimo_tui::list_available_themes()
-            .map_err(|e| CustomError::Other(format!("Cannot list themes: {e}")))?;
-        for theme in themes {
-            println!("{theme}");
-        }
+        // let themes = bimo_tui::list_available_themes()
+        //     .map_err(|e| CustomError::Other(format!("Cannot list themes: {e}")))?;
+        // for theme in themes {
+        //     println!("{theme}");
+        // }
         return Ok(());
     }
 
@@ -21,6 +21,6 @@ pub async fn run(args: &TuiArgs) -> crate::Result<()> {
         None => Session::new(),
     };
 
-    // bimo_tui::run_tui(session, args.theme.as_deref()).map_err(|e| CustomError::Other(e.to_string()))
+    // bimo_tui::run();
     Ok(())
 }
