@@ -1,17 +1,41 @@
 use bimo_core::{Agent, ApiFormat, Provider, Session};
-use cursive::Cursive;
-use cursive::CursiveExt;
-use cursive::view::Nameable;
-use cursive::views::{DummyView, EditView, LinearLayout, Panel, ScrollView, TextView};
+use cursive::view::Resizable;
+use cursive::views::{DummyView, LinearLayout};
+use cursive::{Cursive, CursiveExt};
 use tokio::sync::broadcast;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use crate::config::load_theme;
 use crate::events::EventBridge;
+use crate::input::input_area::INPUT_MIN_HEIGHT;
+use crate::output;
+use crate::theme::{BimoTheme, ThemeColors};
+
+/// Application-wide state stored in the `Cursive` user data.
+///
+/// The streaming event handler and the input area both read and update this
+/// state while the agent runs.
+pub struct AppState {
+    /// Channel to send user prompts to the agent loop.
+    pub prompt_tx: UnboundedSender<String>,
+    /// Current theme colors, used to style new message views.
+    pub colors: ThemeColors,
+    /// Name of the assistant message currently being streamed.
+    pub current_assistant: Option<String>,
+    /// Name of the reasoning message currently being streamed.
+    pub current_reasoning: Option<String>,
+    /// Id of the tool-call box waiting for its result.
+    pub current_tool: Option<usize>,
+    /// Counter used to generate unique view names.
+    pub next_id: usize,
+    /// Current height (in lines) of the input area.
+    pub input_height: usize,
+}
 
 pub struct App {
     siv: Cursive,
     session: Session,
+    theme: BimoTheme,
 }
 
 impl App {
@@ -21,7 +45,11 @@ impl App {
         let mut siv = Cursive::new();
         siv.set_theme(theme.to_cursive_theme());
 
-        let mut app = Self { siv, session };
+        let mut app = Self {
+            siv,
+            session,
+            theme,
+        };
 
         app.setup_ui();
         crate::input::keybindings::setup_global_keybindings(&mut app.siv);
@@ -30,35 +58,44 @@ impl App {
     }
 
     fn setup_ui(&mut self) {
-        let messages = LinearLayout::vertical().with_name("messages");
-        let output_area = ScrollView::new(messages).with_name("output_area");
-
-        let input_area = EditView::new()
-            .on_submit(|siv, content| {
-                let content = content.trim().to_string();
-                if content.is_empty() {
-                    return;
-                }
-                add_user_message(siv, &content);
-                if let Some(tx) = siv.user_data::<UnboundedSender<String>>() {
-                    let _ = tx.send(content);
-                }
-                siv.call_on_name("input", |input: &mut EditView| {
-                    input.set_content("");
-                });
-            })
-            .with_name("input");
-
-        let layout = LinearLayout::vertical()
-            .child(output_area)
-            .child(input_area);
-
+        let layout = crate::layout::create_main_layout();
         self.siv.add_layer(layout);
+        self.render_session_history();
+    }
+
+    fn render_session_history(&mut self) {
+        let colors = self.theme.colors.clone();
+        let history = self.session.messages.clone();
+        self.siv
+            .call_on_name("messages", |messages: &mut LinearLayout| {
+                for message in &history {
+                    let view = match message.role.as_str() {
+                        "user" => output::message_view::user_message(&message.content, &colors),
+                        "assistant" => {
+                            output::message_view::assistant_message(&message.content, &colors)
+                        }
+                        "tool" => output::message_view::system_message(&message.content, &colors),
+                        _ => output::message_view::system_message(&message.content, &colors),
+                    };
+                    messages.add_child(view);
+                    messages.add_child(DummyView::new().max_height(1));
+                }
+            });
     }
 
     pub fn run(mut self) -> Result<(), crate::error::Error> {
         let (prompt_tx, prompt_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
-        self.siv.set_user_data(prompt_tx);
+
+        let state = AppState {
+            colors: self.theme.colors.clone(),
+            current_assistant: None,
+            current_reasoning: None,
+            current_tool: None,
+            next_id: 0,
+            input_height: INPUT_MIN_HEIGHT,
+            prompt_tx,
+        };
+        self.siv.set_user_data(state);
 
         let rt = tokio::runtime::Runtime::new()?;
         let session = self.session.clone();
@@ -66,6 +103,7 @@ impl App {
         rt.spawn(Self::prompt_loop(prompt_rx, session, cb_sink));
 
         self.siv.run();
+        rt.shutdown_background();
         Ok(())
     }
 
@@ -80,10 +118,11 @@ impl App {
                     EventBridge::new(cb_sink.clone(), rx).spawn();
                 }
                 Err(e) => {
-                    let msg = format!("Error starting agent: {e}");
+                    let message = format!("Error starting agent: {e}");
                     let sink = cb_sink.clone();
                     sink.send(Box::new(move |siv: &mut Cursive| {
-                        add_error_message(siv, &msg);
+                        let view = output::message_view::error_message(&message, &colors_from(siv));
+                        output::scroll::add_child(siv, view);
                     }))
                     .ok();
                 }
@@ -94,6 +133,12 @@ impl App {
     pub fn session(&self) -> &Session {
         &self.session
     }
+}
+
+fn colors_from(siv: &mut Cursive) -> ThemeColors {
+    siv.user_data::<AppState>()
+        .map(|state| state.colors.clone())
+        .unwrap_or_default()
 }
 
 async fn run_agent_once(
@@ -122,22 +167,6 @@ async fn run_agent_once(
     let (rx, steer_tx) = agent.run_steerable().await?;
     drop(steer_tx);
     Ok(rx)
-}
-
-fn add_user_message(siv: &mut Cursive, content: &str) {
-    siv.call_on_name("messages", |messages: &mut LinearLayout| {
-        let panel = Panel::new(TextView::new(content.to_string())).title("You");
-        messages.add_child(panel);
-        messages.add_child(DummyView);
-    });
-}
-
-fn add_error_message(siv: &mut Cursive, content: &str) {
-    siv.call_on_name("messages", |messages: &mut LinearLayout| {
-        let panel = Panel::new(TextView::new(content.to_string())).title("Error");
-        messages.add_child(panel);
-        messages.add_child(DummyView);
-    });
 }
 
 pub fn run_tui(session: Session, theme: Option<&str>) -> Result<(), crate::error::Error> {

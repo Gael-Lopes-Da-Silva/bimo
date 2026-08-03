@@ -1,4 +1,4 @@
-use bimo_core::agent::AgentEvent;
+use bimo_core::AgentEvent;
 use cursive::CbSink;
 use cursive::Cursive;
 use tokio::sync::broadcast;

@@ -21,6 +21,5 @@ pub async fn run(args: &TuiArgs) -> crate::Result<()> {
         None => Session::new(),
     };
 
-    bimo_tui::run_tui(session, args.theme.as_deref())
-        .map_err(|e| CustomError::Other(e.to_string()))
+    bimo_tui::run_tui(session, args.theme.as_deref()).map_err(|e| CustomError::Other(e.to_string()))
 }

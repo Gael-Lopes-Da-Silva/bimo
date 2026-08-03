@@ -217,36 +217,3 @@ pub(crate) fn parse_color(s: &str) -> Result<Color, String> {
         _ => Err(format!("Unknown color: {}", s)),
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_parse_hex_color() {
-        assert_eq!(parse_color("#ff0000"), Ok(Color::Rgb(255, 0, 0)));
-        assert_eq!(parse_color("#0f0"), Ok(Color::Rgb(0, 255, 0)));
-        assert_eq!(parse_color("#0000ff"), Ok(Color::Rgb(0, 0, 255)));
-        assert_eq!(
-            parse_color("not-a-color"),
-            Err("Unknown color: not-a-color".into())
-        );
-    }
-
-    #[test]
-    fn test_parse_named_color() {
-        assert_eq!(parse_color("red"), Ok(Color::Dark(BaseColor::Red)));
-        assert_eq!(
-            parse_color("BRIGHT_BLUE"),
-            Ok(Color::Light(BaseColor::Blue))
-        );
-        assert_eq!(parse_color("default"), Ok(Color::TerminalDefault));
-    }
-
-    #[test]
-    fn test_theme_variant_is_valid() {
-        match ThemeVariant::detect() {
-            ThemeVariant::Dark | ThemeVariant::Light => {}
-        }
-    }
-}

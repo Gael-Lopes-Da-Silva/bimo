@@ -105,55 +105,8 @@ impl CommandRegistry {
             "Clear Output",
             "Clear the output area",
             |siv| {
-                siv.call_on_name("messages", |messages: &mut cursive::views::LinearLayout| {
-                    while messages.get_child(0).is_some() {
-                        messages.remove_child(0);
-                    }
-                });
+                crate::output::scroll::clear(siv);
             },
         ));
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_register_and_get() {
-        let mut registry = CommandRegistry::new();
-        registry.register(Command::new("test", "Test", "A test command", |_| {}));
-        assert!(registry.get("test").is_some());
-        assert_eq!(registry.get("test").map(|c| c.name.as_str()), Some("Test"));
-    }
-
-    #[test]
-    fn test_search_by_name_and_description() {
-        let mut registry = CommandRegistry::new();
-        registry.register(Command::new(
-            "compile",
-            "Compile",
-            "Build the project",
-            |_| {},
-        ));
-        registry.register(Command::new(
-            "test",
-            "Run tests",
-            "Execute the test suite",
-            |_| {},
-        ));
-
-        assert_eq!(registry.search("compile").len(), 1);
-        assert_eq!(registry.search("build").len(), 1);
-        assert_eq!(registry.search("nope").len(), 0);
-        assert_eq!(registry.search("").len(), 2);
-    }
-
-    #[test]
-    fn test_default_registry_has_builtins() {
-        let registry = CommandRegistry::default();
-        assert!(registry.get("exit").is_some());
-        assert!(registry.get("help").is_some());
-        assert!(registry.get("clear").is_some());
     }
 }

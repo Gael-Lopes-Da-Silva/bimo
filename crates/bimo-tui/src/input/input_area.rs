@@ -1,150 +1,105 @@
-use cursive::event::{Event, Key};
-use cursive::view::{Nameable, Resizable};
-use cursive::views::{EditView, LinearLayout, ResizedView};
+use cursive::Cursive;
+use cursive::event::{Event, EventResult, Key};
+use cursive::view::{Nameable, Resizable, SizeConstraint};
+use cursive::views::{DummyView, LinearLayout, NamedView, OnEventView, ResizedView, TextArea};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum InputAreaEvent {
-    Submit(String),
-    NewLine,
-    Expand,
-    Contract,
-    AutocompleteTrigger(char),
-    Cancel,
+use crate::app::AppState;
+use crate::output;
+
+/// Base height of the input area: 1 padding line, 1 content line, 1 padding line.
+pub const INPUT_MIN_HEIGHT: usize = 3;
+/// Maximum height: 15 content lines plus the two padding lines.
+pub const INPUT_MAX_HEIGHT: usize = 17;
+
+/// Builds the expandable multi-line input area.
+///
+/// * `Enter` submits the prompt.
+/// * `Ctrl+J` inserts a newline and grows the box by one line (up to
+///   `INPUT_MAX_HEIGHT`).
+///
+/// The `ResizedView` is named `"input_area"` and the inner text area is named
+/// `"input"` so both can be mutated from callbacks.
+pub fn create_input_area() -> NamedView<ResizedView<LinearLayout>> {
+    let text_area = OnEventView::new(TextArea::new())
+        .on_pre_event(Event::Key(Key::Enter), |siv| submit(siv))
+        .on_pre_event_inner(Event::CtrlChar('j'), |textarea, _event| {
+            let mut content = textarea.get_content().to_string();
+            content.push('\n');
+            textarea.set_content(content);
+            textarea.set_cursor(textarea.get_content().len());
+            Some(EventResult::Consumed(None))
+        })
+        .on_pre_event(Event::CtrlChar('j'), |siv| grow(siv))
+        .with_name("input");
+
+    let content = LinearLayout::vertical()
+        .child(DummyView::new().max_height(1))
+        .child(text_area)
+        .child(DummyView::new().max_height(1));
+
+    ResizedView::with_fixed_height(INPUT_MIN_HEIGHT, content).with_name("input_area")
 }
 
-pub struct InputArea {
-    view: ResizedView<LinearLayout>,
-    max_height: usize,
-    min_height: usize,
-    on_event: Option<Box<dyn Fn(InputAreaEvent) + Send + Sync>>,
+fn submit(siv: &mut Cursive) {
+    let content = siv
+        .call_on_name("input", |input: &mut OnEventView<TextArea>| {
+            input.get_inner().get_content().to_string()
+        })
+        .unwrap_or_default();
+    let content = content.trim().to_string();
+    if content.is_empty() {
+        return;
+    }
+
+    let (colors, sent) = {
+        let Some(state) = siv.user_data::<AppState>() else {
+            return;
+        };
+        state.current_assistant = None;
+        state.current_reasoning = None;
+        state.current_tool = None;
+        (
+            state.colors.clone(),
+            state.prompt_tx.send(content.clone()).is_ok(),
+        )
+    };
+    if !sent {
+        return;
+    }
+
+    let view = output::message_view::user_message(&content, &colors);
+    output::scroll::add_child(siv, view);
+
+    clear_input(siv);
+    reset_height(siv);
 }
 
-impl InputArea {
-    pub fn new() -> Self {
-        let edit_view = EditView::new().min_height(1).max_height(15);
-
-        let content = LinearLayout::vertical()
-            .child(cursive::views::DummyView::new().max_height(1))
-            .child(edit_view.with_name("input"))
-            .child(cursive::views::DummyView::new().max_height(1));
-
-        let view = ResizedView::with_fixed_height(3, content);
-
-        Self {
-            view,
-            max_height: 15,
-            min_height: 3,
-            on_event: None,
-        }
-    }
-
-    pub fn set_on_event<F>(&mut self, f: F)
-    where
-        F: Fn(InputAreaEvent) + Send + Sync + 'static,
-    {
-        self.on_event = Some(Box::new(f));
-    }
-
-    pub fn get_content(&self) -> String {
-        self.view
-            .get_inner()
-            .get_child(1)
-            .and_then(|v| v.as_any().downcast_ref::<EditView>())
-            .map(|e| e.get_content().to_string())
-            .unwrap_or_default()
-    }
-
-    pub fn set_content(&mut self, content: &str) {
-        if let Some(edit) = self
-            .view
-            .get_inner_mut()
-            .get_child_mut(1)
-            .and_then(|v| v.as_any_mut().downcast_mut::<EditView>())
-        {
-            edit.set_content(content);
-        }
-    }
-
-    pub fn clear(&mut self) {
-        self.set_content("");
-        self.reset_height();
-    }
-
-    pub fn height(&self) -> usize {
-        self.view.get_height()
-    }
-
-    pub fn set_height(&mut self, height: usize) {
-        let height = height.clamp(self.min_height, self.max_height + 2);
-        self.view
-            .set_height(cursive::view::SizeConstraint::Fixed(height));
-    }
-
-    pub fn reset_height(&mut self) {
-        self.view
-            .set_height(cursive::view::SizeConstraint::Fixed(self.min_height));
-    }
-
-    pub fn expand(&mut self) {
-        let current = self.height();
-        if current < self.max_height + 2 {
-            self.set_height(current + 1);
-        }
-    }
-
-    pub fn handle_event(&mut self, event: &Event) -> bool {
-        match event {
-            Event::Key(Key::Enter) => {
-                let content = self.get_content();
-                if !content.trim().is_empty() {
-                    if let Some(ref cb) = self.on_event {
-                        cb(InputAreaEvent::Submit(content));
-                    }
-                    self.clear();
-                }
-                true
-            }
-            Event::CtrlChar('j') => {
-                self.expand();
-                if let Some(ref cb) = self.on_event {
-                    cb(InputAreaEvent::NewLine);
-                }
-                true
-            }
-            Event::Key(Key::Esc) => {
-                if let Some(ref cb) = self.on_event {
-                    cb(InputAreaEvent::Cancel);
-                }
-                true
-            }
-            _ => false,
-        }
-    }
-
-    pub fn view(&self) -> &ResizedView<LinearLayout> {
-        &self.view
-    }
-
-    pub fn view_mut(&mut self) -> &mut ResizedView<LinearLayout> {
-        &mut self.view
-    }
+fn grow(siv: &mut Cursive) {
+    let height = {
+        let Some(state) = siv.user_data::<AppState>() else {
+            return;
+        };
+        state.input_height = (state.input_height + 1).min(INPUT_MAX_HEIGHT);
+        state.input_height
+    };
+    set_height(siv, height);
 }
 
-impl Default for InputArea {
-    fn default() -> Self {
-        Self::new()
+fn reset_height(siv: &mut Cursive) {
+    if let Some(state) = siv.user_data::<AppState>() {
+        state.input_height = INPUT_MIN_HEIGHT;
     }
+    set_height(siv, INPUT_MIN_HEIGHT);
 }
 
-pub fn create_input_area<F>(on_submit: F) -> InputArea
-where
-    F: Fn(String) + Send + Sync + 'static,
-{
-    let mut area = InputArea::new();
-    area.set_on_event(move |event| {
-        if let InputAreaEvent::Submit(content) = event {
-            on_submit(content);
-        }
+fn clear_input(siv: &mut Cursive) {
+    siv.call_on_name("input", |input: &mut OnEventView<TextArea>| {
+        input.get_inner_mut().set_content("");
     });
-    area
+}
+
+fn set_height(siv: &mut Cursive, height: usize) {
+    siv.call_on_name("input_area", |area: &mut ResizedView<LinearLayout>| {
+        area.set_height(SizeConstraint::Fixed(height));
+    });
 }
