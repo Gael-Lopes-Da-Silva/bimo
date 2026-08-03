@@ -12,10 +12,9 @@ mod handlers;
 mod output;
 
 pub use bimo_core;
+pub use bimo_core::error::Result;
 pub use cli::{Cli, Command};
 pub use handler::run_async;
-
-pub use bimo_core::error::Result;
 
 /// Executes a parsed [`Cli`] on its own tokio runtime.
 ///
