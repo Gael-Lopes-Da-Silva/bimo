@@ -24,9 +24,6 @@ pub async fn run(json: bool, sub: &SessionCommand) -> crate::Result<()> {
         SessionCommand::Undo { id, message_id } => undo(id, message_id.as_deref()).await,
         SessionCommand::Redo { id } => redo(id).await,
         SessionCommand::Restore { id, batch } => restore(id, *batch).await,
-        SessionCommand::Send { id, message, agent } => {
-            crate::handlers::agent::send(id, message, agent).await
-        }
     }
 }
 

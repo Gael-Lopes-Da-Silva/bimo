@@ -6,16 +6,18 @@ use tracing::info;
 
 use crate::agent::Agent;
 use crate::agent::AgentRunner;
-use crate::config::Provider;
 use crate::config::SettingsConfig;
+use crate::config::{ApiFormat, Provider};
 use crate::error::Result;
 use crate::prompt::PromptEngine;
 use crate::skill;
 
 /// Builder-pattern constructor for [`Agent`].
 ///
-/// At minimum a provider and a user prompt must be supplied before calling
-/// [`build`](Self::build).
+/// A user prompt must be supplied before calling [`build`](Self::build).
+/// Provider/model selection is validated at run time by
+/// [`AgentRunner::validate_selection`], so a run without a provider or model
+/// reports a clear error instead of failing during construction.
 pub struct AgentBuilder {
     provider: Option<Provider>,
     model: Option<String>,
@@ -54,7 +56,8 @@ impl AgentBuilder {
     ///
     /// # Errors
     ///
-    /// Returns a `BimoError::Config` if no provider or user prompt was set.
+    /// Returns a `BimoError::Config` if no user prompt was set. Provider and
+    /// model selection are validated later, when the agent runs.
     pub fn build(self) -> Result<Agent> {
         let instructions = self.load_instructions();
 
@@ -69,16 +72,31 @@ impl AgentBuilder {
             .map(|s| s.disabled_skills().clone())
             .unwrap_or_default();
 
-        let provider = self.provider.ok_or_else(|| {
-            crate::error::CustomError::Config("No provider configured".to_string())
-        })?;
-
-        let model = self.model.unwrap_or_else(|| provider.id.clone());
+        let (api_format, provider_name, provider_model, provider_api_key, provider_base_url) =
+            match self.provider {
+                Some(provider) => {
+                    let model = self.model.unwrap_or_else(|| provider.id.clone());
+                    (
+                        provider.api_format,
+                        provider.name,
+                        model,
+                        provider.api_key,
+                        provider.base_url,
+                    )
+                }
+                None => (
+                    ApiFormat::OpenAICompatible,
+                    String::new(),
+                    self.model.unwrap_or_default(),
+                    None,
+                    String::new(),
+                ),
+            };
 
         let reasoning_effort = self.reasoning_effort.or_else(|| {
             self.session
                 .as_ref()
-                .and_then(|s| s.reasoning_effort_for(&model))
+                .and_then(|s| s.reasoning_effort_for(&provider_model))
                 .and_then(Self::parse_reasoning_effort)
         });
 
@@ -102,13 +120,11 @@ impl AgentBuilder {
 
         let max_steps = self.max_steps.unwrap_or(self.settings.max_steps);
 
-        let api_format = provider.api_format;
-
         let runner = AgentRunner {
-            provider_name: provider.name,
-            provider_model: model,
-            provider_api_key: provider.api_key,
-            provider_base_url: provider.base_url,
+            provider_name,
+            provider_model,
+            provider_api_key,
+            provider_base_url,
             api_format,
             system_prompt,
             user_prompt,

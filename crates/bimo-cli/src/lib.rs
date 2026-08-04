@@ -25,10 +25,7 @@
 //! - `model` — inspect model metadata from the models.dev registry: list
 //!   models (optionally restricted to one provider) and show full metadata.
 //! - `session` — create, list, show, delete, fork, clear, export (Markdown or
-//!   JSON), rename, auto-title, undo/redo, restore archived messages, and send
-//!   a new prompt to a session.
-//! - `run` — run the agent on a single prompt, optionally resuming an existing
-//!   session.
+//!   JSON), rename, auto-title, undo/redo, and restore archived messages.
 //! - `settings` — show, set, unset, or reset application settings.
 //! - `tools` — list the built-in agent tools.
 //! - `skills` — list skills discovered from the default skill directories
@@ -40,8 +37,8 @@
 //! # Modules
 //!
 //! - [`cli`] — the public Clap command-line definitions: [`Cli`], [`Command`],
-//!   and their argument/value types (provider, model, session, tui, run,
-//!   settings, tools, skills, cleanup).
+//!   and their argument/value types (provider, model, session, tui, settings,
+//!   tools, skills, cleanup).
 //! - `handler` — the async dispatch logic behind [`run`].
 //! - `handlers` — private per-domain implementations (agent, model, provider,
 //!   session, settings, misc, tui).

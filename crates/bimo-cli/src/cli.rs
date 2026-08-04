@@ -12,7 +12,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
     name = "bimo",
     version,
     about = "Bimo coding agent harness",
-    long_about = "Bimo coding agent harness; configure providers and models, manage sessions, and run the agent."
+    long_about = "Bimo coding agent harness; configure providers and models, manage sessions, and inspect tools and skills."
 )]
 pub struct Cli {
     /// Base config directory (defaults to the platform config dir + `/bimo`).
@@ -47,8 +47,6 @@ pub enum Command {
         #[command(subcommand)]
         sub: SessionCommand,
     },
-    /// Run the agent on a single prompt.
-    Run(RunArgs),
     /// Read and update application settings.
     Settings {
         #[command(subcommand)]
@@ -240,15 +238,6 @@ pub enum SessionCommand {
         #[arg(long)]
         batch: Option<usize>,
     },
-    /// Resume a session by sending a new prompt and running the agent.
-    Send {
-        /// Session id.
-        id: String,
-        /// The user prompt to send.
-        message: String,
-        #[command(flatten)]
-        agent: AgentArgs,
-    },
 }
 
 // ---------------------------------------------------------------------------
@@ -269,24 +258,10 @@ pub struct TuiArgs {
 }
 
 // ---------------------------------------------------------------------------
-// run / shared agent options
+// shared agent options
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Args)]
-pub struct RunArgs {
-    /// The user prompt to run.
-    pub prompt: String,
-    /// Resume an existing session instead of creating a new one.
-    #[arg(long, value_name = "ID")]
-    pub session: Option<String>,
-    /// Name stored in the new session's metadata.
-    #[arg(long)]
-    pub name: Option<String>,
-    #[command(flatten)]
-    pub agent: AgentArgs,
-}
-
-/// Options shared by `run` and `session send`/`title`.
+/// Options shared by model-backed commands (`session title`).
 #[derive(Debug, Args, Clone, Default)]
 pub struct AgentArgs {
     /// Provider id/name (defaults to settings, then the configured default).
