@@ -1,7 +1,7 @@
 use crate::cli::{Cli, Command, TuiArgs};
 
 /// Applies global flags and executes the parsed command.
-pub async fn run_async(cli: &Cli) -> crate::Result<()> {
+pub(crate) async fn run_async(cli: &Cli) -> crate::Result<()> {
     if let Some(dir) = &cli.config_dir {
         bimo_core::paths::set_config_dir(dir.clone());
     }

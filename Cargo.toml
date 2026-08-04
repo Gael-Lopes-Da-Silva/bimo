@@ -1,3 +1,13 @@
+[package]
+name = "bimo"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bimo_core = { path = "crates/bimo-core" }
+bimo_cli = { path = "crates/bimo-cli" }
+bimo_tui = { path = "crates/bimo-tui" }
+
 [workspace]
 resolver = "3"
-members = ["crates/bimo","crates/bimo-cli", "crates/bimo-core", "crates/bimo-tui"]
+members = ["crates/bimo-cli","crates/bimo-core","crates/bimo-tui"]
