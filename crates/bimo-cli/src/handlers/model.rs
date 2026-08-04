@@ -1,5 +1,3 @@
-//! Model command handlers — inspect model metadata from the models.dev registry.
-
 use bimo_core::error::CustomError;
 use bimo_core::models::{ModelEntry, ModelRegistry};
 use bimo_core::providers::CloudProviderRegistry;

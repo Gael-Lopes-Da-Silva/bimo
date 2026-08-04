@@ -1,5 +1,3 @@
-//! Command dispatch — applies global overrides and routes to handlers.
-
 use crate::cli::{Cli, Command, TuiArgs};
 
 /// Applies global flags and executes the parsed command.

@@ -1,5 +1,3 @@
-//! Settings command handlers — read and update application settings.
-
 use bimo_core::config::SettingsConfig;
 use bimo_core::error::CustomError;
 

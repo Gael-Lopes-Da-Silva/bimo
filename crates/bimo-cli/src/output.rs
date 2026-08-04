@@ -1,5 +1,3 @@
-//! Output helpers — JSON emission and plain-text formatting.
-
 use bimo_core::models::ModelEntry;
 use serde::Serialize;
 

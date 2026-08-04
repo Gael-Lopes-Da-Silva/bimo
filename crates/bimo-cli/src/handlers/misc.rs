@@ -1,5 +1,3 @@
-//! Miscellaneous handlers — tools, skills, cleanup, config path.
-
 use std::path::Path;
 
 use bimo_core::config::SettingsConfig;

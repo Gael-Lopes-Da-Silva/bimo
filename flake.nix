@@ -1,5 +1,5 @@
 {
-  description = "A very basic flake";
+  description = "Rust environment";
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-unstable";
@@ -16,11 +16,11 @@
         buildInputs = with pkgs; [
           rustc
           cargo
-          rustfmt
           clippy
-          rust-analyzer
-          pkg-config
+          rustfmt
           openssl
+          pkg-config
+          rust-analyzer
         ];
       };
     };

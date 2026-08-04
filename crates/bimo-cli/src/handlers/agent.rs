@@ -1,5 +1,3 @@
-//! Agent execution handlers — `run`, `session send`, and `session title`.
-
 use std::io::Write;
 
 use bimo_core::config::{ProvidersConfig, SettingsConfig};

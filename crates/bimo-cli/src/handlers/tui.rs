@@ -1,5 +1,3 @@
-//! TUI command handler — launches the interactive TUI.
-
 use bimo_core::error::CustomError;
 use bimo_core::session::Session;
 

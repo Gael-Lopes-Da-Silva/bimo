@@ -1,5 +1,3 @@
-//! Config directory resolution — supports overriding the base config directory.
-
 use std::path::PathBuf;
 use std::sync::RwLock;
 

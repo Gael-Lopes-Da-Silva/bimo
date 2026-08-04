@@ -1,5 +1,3 @@
-//! Session command handlers — create, inspect, and manage sessions.
-
 use std::path::Path;
 
 use bimo_core::config::SettingsConfig;

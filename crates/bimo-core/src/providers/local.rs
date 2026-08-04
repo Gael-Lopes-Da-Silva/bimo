@@ -1,5 +1,3 @@
-//! Local provider registry — built-in local providers.
-
 use std::time::Duration;
 
 use crate::config::{ApiFormat, Provider};

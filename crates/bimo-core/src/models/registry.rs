@@ -1,5 +1,3 @@
-//! Model registry — queries models from the shared provider map.
-
 use std::sync::Arc;
 
 use tokio::sync::RwLock;

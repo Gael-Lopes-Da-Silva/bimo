@@ -1,5 +1,3 @@
-//! Command handlers — one module per command family.
-
 pub mod agent;
 pub mod misc;
 pub mod model;

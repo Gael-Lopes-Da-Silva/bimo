@@ -1,5 +1,3 @@
-//! Builder for constructing a configured [`Agent`].
-
 use std::collections::HashMap;
 use std::path::PathBuf;
 

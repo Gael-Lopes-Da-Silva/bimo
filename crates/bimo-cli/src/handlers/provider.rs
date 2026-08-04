@@ -1,5 +1,3 @@
-//! Provider command handlers — configure and inspect providers.
-
 use bimo_core::config::{ApiFormat, Provider, ProviderType, ProvidersConfig};
 use bimo_core::error::CustomError;
 use bimo_core::models::ModelRegistry;

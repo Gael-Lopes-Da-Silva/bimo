@@ -1,5 +1,3 @@
-//! Configuration persistence — providers and settings stored in `~/.config/bimo/`.
-
 pub mod providers;
 pub mod settings;
 

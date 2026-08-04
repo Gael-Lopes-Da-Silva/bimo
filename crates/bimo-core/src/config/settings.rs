@@ -1,5 +1,3 @@
-//! Session and agent settings — types and persistence for `settings.json`.
-
 use serde::{Deserialize, Serialize};
 
 /// Application settings persisted to `~/.config/bimo/settings.json`.

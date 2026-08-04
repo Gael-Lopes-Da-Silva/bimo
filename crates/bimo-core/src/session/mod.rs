@@ -1,5 +1,3 @@
-//! Session model — messages, persistence, and lifecycle management.
-
 mod manager;
 
 pub use manager::SessionManager;

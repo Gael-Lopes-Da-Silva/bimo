@@ -1,5 +1,3 @@
-//! Error types for the Bimo core library.
-
 use thiserror::Error;
 
 /// Unified error type covering all Bimo core operations.

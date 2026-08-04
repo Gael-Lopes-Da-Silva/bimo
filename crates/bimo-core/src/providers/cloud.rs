@@ -1,5 +1,3 @@
-//! Provider registry — fetches and caches the models.dev provider catalogue.
-
 use std::path::PathBuf;
 use std::sync::Arc;
 

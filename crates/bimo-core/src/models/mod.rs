@@ -1,5 +1,3 @@
-//! Model metadata types, registry, and concrete client construction.
-
 mod provider;
 mod registry;
 pub mod types;

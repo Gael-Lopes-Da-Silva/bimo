@@ -1,5 +1,3 @@
-//! Provider configuration — types and persistence for `providers.json`.
-
 use serde::{Deserialize, Serialize};
 
 /// Whether a provider runs locally or is a cloud service.

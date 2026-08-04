@@ -1,5 +1,3 @@
-//! Agent orchestration — builder and executor.
-
 mod builder;
 mod runner;
 

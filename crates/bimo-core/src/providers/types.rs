@@ -1,5 +1,3 @@
-//! Provider entries from the models.dev registry.
-
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};

@@ -1,5 +1,3 @@
-//! Session lifecycle manager — in-memory cache, persistence, periodic cleanup.
-
 use std::cmp::Reverse;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};

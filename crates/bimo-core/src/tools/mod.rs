@@ -1,5 +1,3 @@
-//! Built-in tool definitions for the agent.
-
 mod edit_file;
 pub mod manage_todo;
 mod read_file;

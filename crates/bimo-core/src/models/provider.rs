@@ -1,8 +1,3 @@
-//! Concrete model client construction from provider configuration.
-//!
-//! Bridges [`ApiFormat`] and provider connection details to the concrete
-//! aisdk SDK model instances used at runtime.
-
 use aisdk::core::DynamicModel;
 use aisdk::providers::{Anthropic, Google, OpenAICompatible};
 

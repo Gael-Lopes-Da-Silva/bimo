@@ -1,5 +1,3 @@
-//! Provider resolution — built-in locals, cloud registries, model discovery.
-
 mod cloud;
 mod local;
 mod types;

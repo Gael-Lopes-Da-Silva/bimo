@@ -1,5 +1,3 @@
-//! Model metadata types from the models.dev API.
-
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
