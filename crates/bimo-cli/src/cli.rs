@@ -11,8 +11,8 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 #[command(
     name = "bimo",
     version,
-    about = "Bimo coding agent harness",
-    long_about = "Bimo coding agent harness; configure providers and models, manage sessions, and inspect tools and skills."
+    about = "Bimo coding agent",
+    long_about = "Bimo coding agent; configure providers and models, manage sessions, and inspect tools and skills."
 )]
 pub struct Cli {
     /// Base config directory (defaults to the platform config dir + `/bimo`).
