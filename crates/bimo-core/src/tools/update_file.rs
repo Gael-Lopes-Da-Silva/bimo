@@ -9,16 +9,16 @@ use tracing::info;
 /// When `replace_all` is `true` all occurrences of `old_string` are replaced;
 /// otherwise only the first occurrence is replaced.
 #[tool(
-    name = "edit_file",
-    desc = "Make a precise string replacement in an existing file. Provide the file_path, the old_string to find, and the new_string to replace it with. The old_string must match exactly, including whitespace. Use replace_all=true to replace all occurrences."
+    name = "update_file",
+    desc = "Update an existing file by making a precise string replacement. Provide the file_path, the old_string to find, and the new_string to replace it with. The old_string must match exactly, including whitespace. Use replace_all=true to replace all occurrences."
 )]
-pub fn edit_file(
+pub fn update_file(
     file_path: String,
     old_string: String,
     new_string: String,
     replace_all: Option<bool>,
 ) -> Tool {
-    info!("Editing file: {}", file_path);
+    info!("Updating file: {}", file_path);
 
     if old_string.is_empty() {
         return Err("old_string cannot be empty".to_string());

@@ -42,9 +42,10 @@
 //! - [`skill`] — loads `SKILL.md` skills (YAML frontmatter plus body) from
 //!   project and user directories for injection into the system prompt.
 //! - [`snapshot`] — git-backed filesystem snapshots; see the section below.
-//! - [`tools`] — the agent's built-in tools — `read_file`, `edit_file`,
-//!   `write_file`, `run_command`, and `manage_todo` (with its [`TodoList`]
-//!   support) — plus helpers to enumerate and describe them.
+//! - [`tools`] — the agent's built-in tools — `ask_user`, `create_file`,
+//!   `read_file`, `update_file`, `delete_file`, `run_command`, and
+//!   `manage_todo` (with its [`TodoList`] support) — plus helpers to
+//!   enumerate and describe them.
 //!
 //! # Re-exports
 //!
@@ -93,6 +94,6 @@ pub use session::{Message, Session, SessionManager, UndoBatch};
 pub use skill::Skill;
 pub use snapshot::{Snapshot, SnapshotRecord};
 pub use tools::{
-    TodoItem, TodoList, TodoPriority, TodoStatus, edit_file, is_builtin, manage_todo, read_file,
-    run_command, tool_names, write_file,
+    TodoItem, TodoList, TodoPriority, TodoStatus, ask_user, create_file, delete_file, is_builtin,
+    manage_todo, read_file, run_command, set_question_handler, tool_names, update_file,
 };

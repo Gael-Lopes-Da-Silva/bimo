@@ -11,7 +11,6 @@ use crate::config::SettingsConfig;
 use crate::error::Result;
 use crate::prompt::PromptEngine;
 use crate::skill;
-use crate::tools;
 
 /// Builder-pattern constructor for [`Agent`].
 ///
@@ -83,8 +82,6 @@ impl AgentBuilder {
                 .and_then(Self::parse_reasoning_effort)
         });
 
-        let tools_desc = tools::describe_tools(&disabled_tools);
-
         let skill_dirs = skill::default_skill_dirs(self.project_dir.as_deref());
         let mut skills = skill::load_skills(&skill_dirs);
         for skill in &mut skills {
@@ -96,7 +93,6 @@ impl AgentBuilder {
 
         let system_prompt = PromptEngine::render_system(&HashMap::from([
             ("PROJECT_CONTEXT".to_string(), instructions),
-            ("TOOLS".to_string(), tools_desc),
             ("SKILLS".to_string(), skills_rendered),
         ]));
 

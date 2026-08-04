@@ -1,10 +1,14 @@
-mod edit_file;
+mod ask_user;
+mod create_file;
+mod delete_file;
 pub mod manage_todo;
 mod read_file;
 mod run_command;
-mod write_file;
+mod update_file;
 
-pub use edit_file::edit_file;
+pub use ask_user::{ask_user, has_question_handler, set_question_handler};
+pub use create_file::create_file;
+pub use delete_file::delete_file;
 pub use manage_todo::manage_todo;
 pub use manage_todo::{
     SharedTodoList, TodoItem, TodoList, TodoPriority, TodoStatus, init_todo_list,
@@ -12,7 +16,7 @@ pub use manage_todo::{
 };
 pub use read_file::read_file;
 pub use run_command::run_command;
-pub use write_file::write_file;
+pub use update_file::update_file;
 
 use std::collections::BTreeSet;
 
@@ -32,9 +36,11 @@ pub fn is_builtin(name: &str) -> bool {
 /// Returns the built-in tools that are not disabled for the session.
 pub fn all_tools(disabled: &BTreeSet<String>) -> Vec<Tool> {
     vec![
+        ask_user(),
+        create_file(),
         read_file(),
-        edit_file(),
-        write_file(),
+        update_file(),
+        delete_file(),
         run_command(),
         manage_todo(),
     ]
