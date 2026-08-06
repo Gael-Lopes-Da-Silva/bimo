@@ -10,6 +10,6 @@ pub async fn run(args: &TuiArgs) -> crate::Result<()> {
         None => Session::new(),
     };
 
-    bimo_tui::run().await.expect("Cannot launch TUI");
+    // bimo_tui::run().await.expect("Cannot launch TUI");
     Ok(())
 }

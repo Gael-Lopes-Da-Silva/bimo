@@ -5,4 +5,3 @@ edition = "2024"
 
 [dependencies]
 bimo_core = { path = "../bimo-core" }
-textual = "1.1.0"
