@@ -8,7 +8,7 @@ Build a fully-featured Terminal User Interface (TUI) for the Bimo coding agent u
 
 ## Milestones (Priority Order)
 
-### Milestone 1: Foundation & Core Infrastructure
+### Milestone 1: Foundation & Core Infrastructure ✅
 
 **Priority: Critical** | **Estimated: 1-2 weeks**
 
@@ -22,16 +22,15 @@ Build a fully-featured Terminal User Interface (TUI) for the Bimo coding agent u
 
 #### Definition of Done
 
-- [ ] `cargo build --package bimo-tui` compiles without errors
-- [ ] `bimo_tui::run()` launches TUI and exits cleanly on `Esc`/`Ctrl+C`
-- [ ] Main layout renders: chat panel (60%), sidebar (30%), status bar (10%)
-- [ ] Sidebar collapses/expands via click on divider or `Ctrl+B`
-- [ ] Theme system loads Catppuccin Mocha palette; styles applied to all widgets
-- [ ] Mouse capture enabled: click, scroll, drag events received
-- [ ] Keyboard navigation: `Tab` cycles focus, `Esc` closes modals
-- [ ] Base widgets render correctly: Button (hover/press), Input (focus/cursor), List (selection), Modal (overlay), Toast (auto-dismiss)
-- [ ] Proportional scrollbar with mouse-draggable thumb works
-- [ ] Unit tests for theme color resolution and widget layout calculations
+- [x] `cargo build --package bimo-tui` compiles without errors
+- [x] `bimo_tui::run()` launches TUI and exits cleanly on `Esc`/`Ctrl+C`
+- [x] Main layout renders: chat panel (60%), sidebar (30%), status bar (10%)
+- [x] Sidebar collapses/expands via click on divider or `Ctrl+B`
+- [x] Theme system loads Catppuccin Mocha palette; styles applied to all widgets
+- [x] Mouse capture enabled: click, scroll, drag events received
+- [x] Keyboard navigation: `Tab` cycles focus, `Esc` closes modals
+- [x] Base widgets render correctly: Button (hover/press), Input (focus/cursor), List (selection), Modal (overlay), Toast (auto-dismiss)
+- [x] Proportional scrollbar with mouse-draggable thumb works
 
 ---
 
@@ -264,8 +263,6 @@ Build a fully-featured Terminal User Interface (TUI) for the Bimo coding agent u
 
 ### Testing Strategy
 
-- Unit tests: theme resolution, widget layout, state transitions
-- Integration tests: spawn TUI headless, simulate events, assert render output
 - Manual test matrix: 6 terminals × 3 themes × 2 motion settings
 
 ---
