@@ -5,3 +5,15 @@ edition = "2024"
 
 [dependencies]
 bimo_core = { path = "../bimo-core" }
+ratatui = { version = "0.28", features = ["crossterm"] }
+crossterm = "0.28"
+tokio = { version = "1", features = ["full", "macros"] }
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+syntect = "5"
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+directories = "5"
+rand = "0.8"
