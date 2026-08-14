@@ -22,6 +22,15 @@
 
           openssl
           pkg-config
+
+          glib
+          gtk4
+          pango
+          cairo
+          graphene
+          gdk-pixbuf
+          libadwaita
+          gobject-introspection
         ];
       };
     };
